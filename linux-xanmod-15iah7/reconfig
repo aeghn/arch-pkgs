@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+KERNEL_DIR="$HOME/Projects/linux-xanmod"
+PKG_DIR="$HOME/Projects/pkgs/linux-xanmod-15iah7"
+
+
+cp "$PKG_DIR/config" "$KERNEL_DIR/.config"
+cd "$KERNEL_DIR"
+make nconfig
+cp "$KERNEL_DIR/.config" "$PKG_DIR/config"
