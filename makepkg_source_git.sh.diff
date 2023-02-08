@@ -1,0 +1,13 @@
+51c51,56
+< 		if ! git clone --mirror "$url" "$dir"; then
+---
+> 		msg2 "$url -- $dir"
+> 		if echo  "$url" | grep -E -i "^file:/" ; then
+> 			rm -rf "$dir"
+> 			ln -s "$(realpath "${url/file://}")" "$dir"
+> 			
+> 		elif ! git clone --depth=1 --mirror "$url" "$dir"; then
+94c99
+< 	elif ! git clone -s "$dir" "${dir##*/}"; then
+---
+> 	elif ! git clone -s "$dir" --depth=1 "${dir##*/}"; then
