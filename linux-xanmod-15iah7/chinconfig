@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+
+. /usr/share/makepkg/util/message.sh
+colorize
+
+chin_default_config() {
+    # CONFIG_STACK_VALIDATION gives better stack traces. Also is enabled in all official kernel packages by Archlinux team
+    scripts/config --enable CONFIG_STACK_VALIDATION
+
+    msg2 "Enable IKCONFIG following Arch's philosophy"
+    scripts/config --enable CONFIG_IKCONFIG \
+                   --enable CONFIG_IKCONFIG_PROC
+
+    msg2 "Disabling NUMA..."
+    scripts/config --disable CONFIG_NUMA
+
+    msg2 "Compress modules by default (following Arch's kernel)"
+    # scripts/config --enable CONFIG_MODULE_COMPRESS_ZSTD
+}
+
+chin_microarchitecture_config() {
+    local _localversion=-15iah7
+    local microarchitecture=CONFIG_MALDERLAKE
+    msg2 "Building this package for microarchitecture: ${microarchitecture}${_localversion}"
+
+    if [ -z "${_localversion}" ]; then
+        _localversion=$(echo ${microarchitecture,,} | sed -e 's/config_m/-/g' -e 's/config_generic_cpu/-x64v/g')
+    fi
+    
+    _defaultmicro=$(grep ^CONFIG_LOCALVERSION .config)
+#    sed -e "s|^$_defaultmicro|CONFIG_LOCALVERSION=\"$_localversion\"|g" -i .config
+
+    sed -e 's|^CONFIG_GENERIC_CPU=y|# CONFIG_GENERIC_CPU is not set|g' -i .config
+    sed -e 's|^CONFIG_GENERIC_CPU2=y|# CONFIG_GENERIC_CPU2 is not set|g' -i .config
+    sed -e 's|^CONFIG_GENERIC_CPU3=y|# CONFIG_GENERIC_CPU3 is not set|g' -i .config
+    sed -e 's|^CONFIG_GENERIC_CPU4=y|# CONFIG_GENERIC_CPU4 is not set|g' -i .config
+
+    chin_disable LOCALVERSION
+    chin_enable "$microarchitecture"
+}
+
+chin_driver_config() {
+    local disable_list=(
+        DRM_PANEL_SONY_ACX565AKM
+        DRM_PANEL_SONY_TULIP_TRULY_NT35521
+        FB_OMAP2_PANEL_SONY_ACX565AKM
+        HID_SONY
+        INPUT_PCSPKR
+        WATCHDOG
+
+        DRM_AMDGPU
+        KVM_AMD
+        AMD_IOMMU
+        CPU_SUP_AMD
+
+        DRM_PANEL_SONY_ACX565AKM
+
+        JFS_FS
+        F2FS_FS
+
+        INFINIBAND_VMWARE_PVRDMA
+        VMWARE_BALLOON
+        VMWARE_PVSCSI
+        VMWARE_VMCI
+
+        MACINTOSH_DRIVERS
+        APPLE_M1_CPU_PMU
+        APPLE_MAILBOX
+        APPLE_PROPERTIES
+        BACKLIGHT_APPLE
+        HID_APPLE
+        HID_APPLEIR
+        I2C_APPLE
+        MOUSE_APPLETOUCH
+        PCIE_APPLE
+        SENSORS_APPLESMC
+        USB_APPLEDISPLAY
+
+        DRM_NOUVEAU
+        DRM_RADEON
+        DRM_VMWGFX
+        MELLANOX_PLATFORM
+        NET_VENDOR_BROADCOM
+        WLAN_VENDOR_BROADCOM
+        NET_VENDOR_QLOGIC
+        SFC
+
+	# NET
+	ACER_WIRELESS
+    	ASUS_WIRELESS)
+
+    local enable_list=(
+        HID_LENOVO
+        IDEAPAD_LAPTOP
+        INPUT_IDEAPAD_SLIDEBAR
+    )
+
+    chin_disable "${disable_list[@]}"
+    chin_enable "${enable_list[@]}"    
+}
+
+chin_disable() {
+    local item
+    local items=()
+    for i in "$@"; do
+	item="${i#*CONFIG_}"
+	item="${item%=*}"
+	item="${item%% *}"
+	items=("${items[@]}" --disable "${item}")
+    done
+    msg2 "Disable $(echo ${items[@]})"
+    scripts/config "${items[@]}" || exit 1
+}
+
+chin_enable() {
+    local item
+    local items=()
+    for i in "$@"; do
+        item="${i#*CONFIG_}"
+        item=${item%=*}
+        item=${item%% *}
+        items=("${items[@]}" --enable "${item}")
+    done
+
+    msg2 "Enable $(echo ${items[@]})"
+    scripts/config "${items[@]}" || exit 1
+}
+
+chin_disable_pattern() {
+    local pattern="$1"
+    shift
+
+    local tmpfile=/tmp/.kernel.config
+    cp .config "${tmpfile}"
+
+    local ex=()
+    for i in "$@"; do
+	ex=(${ex[@]} -e "/$i/d")
+    done
+    
+    cat "${tmpfile}" | grep -v "^#" | grep "$pattern" | sed -e "s/1/1/g" ${ex[@]} | while read line; do
+	chin_disable "$line"
+    done
+}
+
+chin_disable_vendors() {
+    msg "Disable by patterns..."
+    chin_disable_pattern SONY
+    chin_disable_pattern HUAWEI 
+    chin_disable_pattern CONFIG_CPU_SUP_ INTEL
+    chin_disable_pattern CONFIG_WLAN_VENDOR_ INTEL
+    chin_disable MLX4_INFINIBAND MLX4_EN MLX4_CORE_GEN2 MLX4_INFINIBAND MLX4_CORE SCSI_BNX2X_FCOE SCSI_BNX2_ISCSI SCSI_CXGB4_ISCSI SCSI_CXGB3_ISCSI INFINIBAND_USNIC INFINIBAND_OCRDMA 
+    chin_disable_pattern CONFIG_NET_VENDOR_ REALTEK
+    chin_disable_pattern AMD
+}
+
+chin_set_config() {
+    msg "Apply chin settings..."
+    chin_default_config
+    chin_microarchitecture_config
+    chin_driver_config
+    chin_disable_vendors
+
+    echo
+    msg "Apply chin settings done."
+}
+
+chin_set_config

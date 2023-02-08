@@ -8,8 +8,7 @@
 
 _pkgsuffix=15iah7
 pkgbase="linux-xanmod-$_pkgsuffix"
-_srctag=5.19.0-xanmod1
-pkgver=${_srctag//-/.}
+pkgver=999
 pkgrel=1
 
 pkgdesc="Linux Build"
@@ -17,19 +16,16 @@ arch=(x86_64)
 url="https://github.com/xanmod/linux/commits/$_srctag"
 license=(GPL2)
 makedepends=(
-    bc kmod libelf pahole
-    xmlto
-    git
-    ccache  
+    bc cpio kmod libelf perl tar xz git ccache
 )
 options=('!strip')
 _srcname="linux-xanmod-$_pkgsuffix"
 source=(
     "$_srcname::git+file:///home/chin/Projects/linux-xanmod"
-    config         # the main kernel config file
     # Adapted from https://github.com/zhmars/cjktty-patches
     0001-cjktty.patch
     0002-remove-confused-Alderlake-P-s-port-B-intialization.patch
+    chinconfig
 )
 validpgpkeys=(
     'ABAF11C65A2970B130ABE3C479BE3E4300411886'  # Linus Torvalds
@@ -43,50 +39,83 @@ sha256sums=(
     'SKIP'
 )
 
-export KBUILD_BUILD_HOST=archlinux
-export KBUILD_BUILD_USER=$pkgbase
-export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
+export KBUILD_BUILD_HOST=${KBUILD_BUILD_HOST:-archlinux}
+export KBUILD_BUILD_USER=${KBUILD_BUILD_USER:-makepkg}
+export KBUILD_BUILD_TIMESTAMP=${KBUILD_BUILD_TIMESTAMP:-$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})}
+
+pkgver() {
+  cd "${_srcname}"
+
+  git describe --tags --long | sed -E 's/^v//;s/([^-]*-g)/r\1/;s/-/./g;s/\.rc/rc/'
+}
 
 prepare() {
-    cd $_srcname
+    msg2 "Enter directory: $(realpath ${_srcname})"
+    cd "${_srcname}"
+
+    msg2 "Setting version..."
+    scripts/setlocalversion --save-scmversion
+    # echo "$pkgrel" > localversion.10-pkgrel
+    echo "${pkgbase#linux-xanmod}" > localversion.20-pkgname
 
     local src
     for src in "${source[@]}"; do
         src="${src%%::*}"
         src="${src##*/}"
         [[ $src = *.patch ]] || continue
-        echo "Applying patch $src..."
+        msg2 "Applying patch $src..."
         patch -Np1 < "../$src"
     done
 
-    echo "Setting config..."
-    cp ../config .config
-    scripts/config --set-str CONFIG_LOCALVERSION "-$_pkgsuffix"
+    msg2 "Get highest supported level"
+    # https://unix.stackexchange.com/questions/631217/how-do-i-check-if-my-cpu-supports-x86-64-v2
+    local arth_level=$(awk 'BEGIN {
+    while (!/flags/) if (getline < "/proc/cpuinfo" != 1) exit 1
+        if (/lm/&&/cmov/&&/cx8/&&/fpu/&&/fxsr/&&/mmx/&&/syscall/&&/sse2/) level = 1
+        if (level == 1 && /cx16/&&/lahf/&&/popcnt/&&/sse4_1/&&/sse4_2/&&/ssse3/) level = 2
+        if (level == 2 && /avx/&&/avx2/&&/bmi1/&&/bmi2/&&/f16c/&&/fma/&&/abm/&&/movbe/&&/xsave/) level = 3
+        if (level == 3 && /avx512f/&&/avx512bw/&&/avx512cd/&&/avx512dq/&&/avx512vl/) level = 4
+        if (level > 0) { print "x86-64-v" level; exit level + 1 }
+        exit 1
+    }')
+    local _config="config_${arth_level}"
+
+    msg2 "Applying configuration"
+    cp -vf CONFIGS/xanmod/gcc/${_config} .config
+
+    bash ../chinconfig || exit 1
     make olddefconfig
+    # exit 1
 
-    scripts/config --set-str CONFIG_LOCALVERSION "-$_pkgsuffix"
-
+    export LOCALVERSION=
     make -s kernelrelease > version
-    echo "Prepared %s version %s" "$pkgbase" "$(<version)"
+    msg2 "Prepared %s version %s" "$pkgbase" "$(<version)"
+
+    # save configuration for later reuse
+    cat .config > "${SRCDEST}/config.last"
 }
 
 build() {
-    cd $_srcname
+    cd "${_srcname}"
     export PATH="/usr/lib/ccache/bin/:$PATH"
-    make -j 14 all
+    make -j8 all
 }
 
 _package() {
-    pkgdesc="The $pkgdesc kernel and modules"
+    pkgdesc="The Linux kernel and modules with Xanmod patches"
     depends=(coreutils kmod initramfs)
     optdepends=('crda: to set the correct wireless channels of your country'
                 'linux-firmware: firmware images needed for some devices')
+    provides=(VIRTUALBOX-GUEST-MODULES
+              WIREGUARD-MODULE
+              KSMBD-MODULE
+              NTFS3-MODULE)
 
-    cd $_srcname
+    cd "${_srcname}"
     local kernver="$(<version)"
     local modulesdir="$pkgdir/usr/lib/modules/$kernver"
 
-    echo "Installing boot image..."
+    msg2 "Installing boot image..."
     # systemd expects to find the kernel here to allow hibernation
     # https://github.com/systemd/systemd/commit/edda44605f06a41fb86b7ab8128dcf99161d2344
     install -Dm644 "$(make -s image_name)" "$modulesdir/vmlinuz"
@@ -94,36 +123,34 @@ _package() {
     # Used by mkinitcpio to name the kernel
     echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
 
-    echo "Installing modules..."
-    make INSTALL_MOD_PATH="$pkgdir/usr" modules_install
+    msg2 "Installing modules..."
+    make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 modules_install
 
     # remove build and source links
-    rm -f "$modulesdir"/{source,build}
-
-    echo "Fixing permissions..."
-    chmod -Rc u=rwX,go=rX "$pkgdir"
+    rm "$modulesdir"/{source,build}
 }
 
 _package-headers() {
     pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel"
+    depends=(pahole)
 
-    cd $_srcname
+    cd "${_srcname}"
     local builddir="$pkgdir/usr/lib/modules/$(<version)/build"
 
-    echo "Installing build files..."
+    msg2 "Installing build files..."
     install -Dt "$builddir" -m644 .config Makefile Module.symvers System.map \
-            version vmlinux
+            localversion.* version vmlinux
     install -Dt "$builddir/kernel" -m644 kernel/Makefile
     install -Dt "$builddir/arch/x86" -m644 arch/x86/Makefile
     cp -t "$builddir" -a scripts
 
-    # add objtool for external module building and enabled VALIDATION_STACK option
+    # required when STACK_VALIDATION is enabled
     install -Dt "$builddir/tools/objtool" tools/objtool/objtool
 
-    # add xfs and shmem for aufs building
-    mkdir -p "$builddir"/{fs/xfs,mm}
+    # required when DEBUG_INFO_BTF_MODULES is enabled
+    if [ -f "$builddir/tools/bpf/resolve_btfids" ]; then install -Dt "$builddir/tools/bpf/resolve_btfids" tools/bpf/resolve_btfids/resolve_btfids ; fi
 
-    echo "Installing headers..."
+    msg2 "Installing headers..."
     cp -t "$builddir" -a include
     cp -t "$builddir/arch/x86" -a arch/x86/include
     install -Dt "$builddir/arch/x86/kernel" -m644 arch/x86/kernel/asm-offsets.s
@@ -131,18 +158,21 @@ _package-headers() {
     install -Dt "$builddir/drivers/md" -m644 drivers/md/*.h
     install -Dt "$builddir/net/mac80211" -m644 net/mac80211/*.h
 
-    # http://bugs.archlinux.org/task/13146
+    # https://bugs.archlinux.org/task/13146
     install -Dt "$builddir/drivers/media/i2c" -m644 drivers/media/i2c/msp3400-driver.h
 
-    # http://bugs.archlinux.org/task/20402
+    # https://bugs.archlinux.org/task/20402
     install -Dt "$builddir/drivers/media/usb/dvb-usb" -m644 drivers/media/usb/dvb-usb/*.h
     install -Dt "$builddir/drivers/media/dvb-frontends" -m644 drivers/media/dvb-frontends/*.h
     install -Dt "$builddir/drivers/media/tuners" -m644 drivers/media/tuners/*.h
 
+    # https://bugs.archlinux.org/task/71392
+    install -Dt "$builddir/drivers/iio/common/hid-sensors" -m644 drivers/iio/common/hid-sensors/*.h
+
     echo "Installing KConfig files..."
     find . -name 'Kconfig*' -exec install -Dm644 {} "$builddir/{}" \;
 
-    echo "Removing unneeded architectures..."
+    msg2 "Removing unneeded architectures..."
     local arch
     for arch in "$builddir"/arch/*/; do
         [[ $arch = */x86/ ]] && continue
@@ -150,16 +180,16 @@ _package-headers() {
         rm -r "$arch"
     done
 
-    echo "Removing documentation..."
+    msg2 "Removing documentation..."
     rm -r "$builddir/Documentation"
 
-    echo "Removing broken symlinks..."
+    msg2 "Removing broken symlinks..."
     find -L "$builddir" -type l -printf 'Removing %P\n' -delete
 
-    echo "Removing loose objects..."
+    msg2 "Removing loose objects..."
     find "$builddir" -type f -name '*.o' -printf 'Removing %P\n' -delete
 
-    echo "Stripping build tools..."
+    msg2 "Stripping build tools..."
     local file
     while read -rd '' file; do
         case "$(file -bi "$file")" in
@@ -174,15 +204,15 @@ _package-headers() {
         esac
     done < <(find "$builddir" -type f -perm -u+x ! -name vmlinux -print0)
 
-    echo "Adding symlink..."
+    msg2 "Stripping vmlinux..."
+    strip -v $STRIP_STATIC "$builddir/vmlinux"
+
+    msg2 "Adding symlink..."
     mkdir -p "$pkgdir/usr/src"
     ln -sr "$builddir" "$pkgdir/usr/src/$pkgbase"
-
-    echo "Fixing permissions..."
-    chmod -Rc u=rwX,go=rX "$pkgdir"
 }
 
-pkgname=("$pkgbase" "$pkgbase-headers")
+pkgname=("${pkgbase}" "${pkgbase}-headers")
 for _p in "${pkgname[@]}"; do
     eval "package_$_p() {
     $(declare -f "_package${_p#$pkgbase}")

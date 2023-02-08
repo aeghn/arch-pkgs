@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+find_related_files() {
+    fd Kconfig | while read line; do
+	rg "$1" $line &>/dev/null && echo $line
+    done
+}
+
+find_config_depend() {
+    local item="$1"
+    find_related_files "depends on.*$item" | while read line; do
+        awk -v name="$item" 'BEGIN {ti=0; config}; { if ($0 ~ /^config/) { if (ti == 1) { print config"\n" }; config=$0; ti=0 } else { config=config"\n"$0 }; if ($0 ~ "depends on.* "name"") { ti=1 } }; END{print config}' "$line" && echo "===== $line ====="
+    done
+}
+
+find_config_select() {
+    local item="$1"
+    find_related_files "select.*$item" | while read line; do
+        awk -v name="$item" 'BEGIN {ti=0; config;}; { if ($0 ~ /^config/) { if (ti == 1) { print config"\n" }; config=$0; ti=0 } else { config=config"\n"$0 }; if ($0 ~ "select.*"name"") { ti=1; } }; END{print config}' "$line" && echo "===== $line ====="
+    done
+}
+
+find_queue() {
+    local v p queue=("$1")
+    while [ ${#queue[@]} -gt 0 ]; do
+	p=${queue[0]}
+	unset queue[0]
+	echo "${#queue[@]}, $p, ${queue}"
+	v="$(find_config_depend "$p")"
+	echo "$v"
+
+	echo "$v" | grep '^config' | while read line; do
+	    queue+=(${line#config })
+	done
+
+	v="$(find_config_select "$p")"
+        echo "$v"
+
+        echo "$v" | grep '^config' | while read line; do
+            queue+=(${line#config })
+        done
+    done
+}
+
+find_config_select "${1#CONFIG_}"
+#find_queue "$1"
+
