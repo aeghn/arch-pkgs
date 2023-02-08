@@ -98,7 +98,7 @@ prepare() {
 build() {
     cd "${_srcname}"
     export PATH="/usr/lib/ccache/bin/:$PATH"
-    make -j8 all
+    make -j20 all
 }
 
 _package() {
