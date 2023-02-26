@@ -24,7 +24,7 @@ source=(
     "$_srcname::git+file:///home/chin/Projects/linux-xanmod"
     # Adapted from https://github.com/zhmars/cjktty-patches
     0001-cjktty.patch
-    0002-remove-confused-Alderlake-P-s-port-B-intialization.patch
+    drm-i915-Fake-dual-eDP-VBT-fixes.mbox
     chinconfig
 )
 validpgpkeys=(
@@ -35,7 +35,7 @@ validpgpkeys=(
 sha256sums=(
     'SKIP'
     'SKIP'
-    'SKIP'
+    'ec78c7f2084a081e4b039a23fb698bf1244c0b995f071a08eb4f9fc6fbfdfe96'
     'SKIP'
 )
 
@@ -62,7 +62,7 @@ prepare() {
     for src in "${source[@]}"; do
         src="${src%%::*}"
         src="${src##*/}"
-        [[ $src = *.patch ]] || continue
+        [[ $src = *.patch ]] || [[ $src = *.mbox ]] || continue
         msg2 "Applying patch $src..."
         patch -Np1 < "../$src"
     done

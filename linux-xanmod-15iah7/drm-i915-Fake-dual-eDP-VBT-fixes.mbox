@@ -1,0 +1,1574 @@
+From patchwork Fri Nov 25 17:31:48 2022
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Subject: [v2,1/9] drm/i915: Introduce intel_panel_init_alloc()
+From: Ville Syrjala <ville.syrjala@linux.intel.com>
+X-Patchwork-Id: 513099
+Message-Id: <20221125173156.31689-2-ville.syrjala@linux.intel.com>
+To: intel-gfx@lists.freedesktop.org
+Cc: Jani Nikula <jani.nikula@intel.com>
+Date: Fri, 25 Nov 2022 19:31:48 +0200
+
+From: Ville Syrjälä <ville.syrjala@linux.intel.com>
+
+Introduce a place where we can initialize connector->panel
+after it's been allocated. We already have a intel_panel_init()
+so had to get creative with the name and came up with
+intel_panel_init_alloc().
+
+Cc: Animesh Manna <animesh.manna@intel.com>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+---
+ drivers/gpu/drm/i915/display/intel_connector.c | 2 +-
+ drivers/gpu/drm/i915/display/intel_panel.c     | 7 +++++++
+ drivers/gpu/drm/i915/display/intel_panel.h     | 1 +
+ 3 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_connector.c b/drivers/gpu/drm/i915/display/intel_connector.c
+index 6205ddd3ded0..562da3b741e2 100644
+--- a/drivers/gpu/drm/i915/display/intel_connector.c
++++ b/drivers/gpu/drm/i915/display/intel_connector.c
+@@ -54,7 +54,7 @@ int intel_connector_init(struct intel_connector *connector)
+ 	__drm_atomic_helper_connector_reset(&connector->base,
+ 					    &conn_state->base);
+ 
+-	INIT_LIST_HEAD(&connector->panel.fixed_modes);
++	intel_panel_init_alloc(connector);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/gpu/drm/i915/display/intel_panel.c b/drivers/gpu/drm/i915/display/intel_panel.c
+index 1640726bfbf6..b49228eb79e7 100644
+--- a/drivers/gpu/drm/i915/display/intel_panel.c
++++ b/drivers/gpu/drm/i915/display/intel_panel.c
+@@ -661,6 +661,13 @@ intel_panel_mode_valid(struct intel_connector *connector,
+ 	return MODE_OK;
+ }
+ 
++void intel_panel_init_alloc(struct intel_connector *connector)
++{
++	struct intel_panel *panel = &connector->panel;
++
++	INIT_LIST_HEAD(&panel->fixed_modes);
++}
++
+ int intel_panel_init(struct intel_connector *connector)
+ {
+ 	struct intel_panel *panel = &connector->panel;
+diff --git a/drivers/gpu/drm/i915/display/intel_panel.h b/drivers/gpu/drm/i915/display/intel_panel.h
+index 5c5b5b7f95b6..4b51e1c51da6 100644
+--- a/drivers/gpu/drm/i915/display/intel_panel.h
++++ b/drivers/gpu/drm/i915/display/intel_panel.h
+@@ -18,6 +18,7 @@ struct intel_connector;
+ struct intel_crtc_state;
+ struct intel_encoder;
+ 
++void intel_panel_init_alloc(struct intel_connector *connector);
+ int intel_panel_init(struct intel_connector *connector);
+ void intel_panel_fini(struct intel_connector *connector);
+ enum drm_connector_status
+
+From patchwork Fri Nov 25 17:31:49 2022
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Subject: [v2,2/9] drm/i915: Do panel VBT init early if the VBT declares an
+ explicit panel type
+From: Ville Syrjala <ville.syrjala@linux.intel.com>
+X-Patchwork-Id: 513098
+Message-Id: <20221125173156.31689-3-ville.syrjala@linux.intel.com>
+To: intel-gfx@lists.freedesktop.org
+Cc: Jani Nikula <jani.nikula@intel.com>
+Date: Fri, 25 Nov 2022 19:31:49 +0200
+
+From: Ville Syrjälä <ville.syrjala@linux.intel.com>
+
+Lots of ADL machines out there with bogus VBTs that declare
+two eDP child devices. In order for those to work we need to
+figure out which power sequencer to use before we try the EDID
+read. So let's do the panel VBT init early if we can, falling
+back to the post-EDID init otherwise.
+
+The post-EDID init panel_type=0xff approach of assuming the
+power sequencer should already be enabled doesn't really work
+with multiple eDP panels, and currently we just end up using
+the same power sequencer for both eDP ports, which at least
+confuses the wakeref tracking, and potentially also causes us
+to toggle the VDD for the panel when we should not.
+
+Cc: Animesh Manna <animesh.manna@intel.com>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+---
+ drivers/gpu/drm/i915/display/icl_dsi.c        |  2 +-
+ drivers/gpu/drm/i915/display/intel_bios.c     | 56 ++++++++++++++-----
+ drivers/gpu/drm/i915/display/intel_bios.h     | 11 ++--
+ .../drm/i915/display/intel_display_types.h    |  2 +-
+ drivers/gpu/drm/i915/display/intel_dp.c       |  7 ++-
+ drivers/gpu/drm/i915/display/intel_lvds.c     |  4 +-
+ drivers/gpu/drm/i915/display/intel_panel.c    |  1 +
+ drivers/gpu/drm/i915/display/intel_sdvo.c     |  2 +-
+ drivers/gpu/drm/i915/display/vlv_dsi.c        |  2 +-
+ 9 files changed, 61 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/display/icl_dsi.c b/drivers/gpu/drm/i915/display/icl_dsi.c
+index d16b30a2dded..ae14c794c4bc 100644
+--- a/drivers/gpu/drm/i915/display/icl_dsi.c
++++ b/drivers/gpu/drm/i915/display/icl_dsi.c
+@@ -2043,7 +2043,7 @@ void icl_dsi_init(struct drm_i915_private *dev_priv)
+ 	/* attach connector to encoder */
+ 	intel_connector_attach_encoder(intel_connector, encoder);
+ 
+-	intel_bios_init_panel(dev_priv, &intel_connector->panel, NULL, NULL);
++	intel_bios_init_panel_late(dev_priv, &intel_connector->panel, NULL, NULL);
+ 
+ 	mutex_lock(&dev_priv->drm.mode_config.mutex);
+ 	intel_panel_add_vbt_lfp_fixed_mode(intel_connector);
+diff --git a/drivers/gpu/drm/i915/display/intel_bios.c b/drivers/gpu/drm/i915/display/intel_bios.c
+index c2987f2c2b2e..64f927f6479d 100644
+--- a/drivers/gpu/drm/i915/display/intel_bios.c
++++ b/drivers/gpu/drm/i915/display/intel_bios.c
+@@ -620,14 +620,14 @@ static void dump_pnp_id(struct drm_i915_private *i915,
+ 
+ static int opregion_get_panel_type(struct drm_i915_private *i915,
+ 				   const struct intel_bios_encoder_data *devdata,
+-				   const struct edid *edid)
++				   const struct edid *edid, bool use_fallback)
+ {
+ 	return intel_opregion_get_panel_type(i915);
+ }
+ 
+ static int vbt_get_panel_type(struct drm_i915_private *i915,
+ 			      const struct intel_bios_encoder_data *devdata,
+-			      const struct edid *edid)
++			      const struct edid *edid, bool use_fallback)
+ {
+ 	const struct bdb_lvds_options *lvds_options;
+ 
+@@ -652,7 +652,7 @@ static int vbt_get_panel_type(struct drm_i915_private *i915,
+ 
+ static int pnpid_get_panel_type(struct drm_i915_private *i915,
+ 				const struct intel_bios_encoder_data *devdata,
+-				const struct edid *edid)
++				const struct edid *edid, bool use_fallback)
+ {
+ 	const struct bdb_lvds_lfp_data *data;
+ 	const struct bdb_lvds_lfp_data_ptrs *ptrs;
+@@ -701,9 +701,9 @@ static int pnpid_get_panel_type(struct drm_i915_private *i915,
+ 
+ static int fallback_get_panel_type(struct drm_i915_private *i915,
+ 				   const struct intel_bios_encoder_data *devdata,
+-				   const struct edid *edid)
++				   const struct edid *edid, bool use_fallback)
+ {
+-	return 0;
++	return use_fallback ? 0 : -1;
+ }
+ 
+ enum panel_type {
+@@ -715,13 +715,13 @@ enum panel_type {
+ 
+ static int get_panel_type(struct drm_i915_private *i915,
+ 			  const struct intel_bios_encoder_data *devdata,
+-			  const struct edid *edid)
++			  const struct edid *edid, bool use_fallback)
+ {
+ 	struct {
+ 		const char *name;
+ 		int (*get_panel_type)(struct drm_i915_private *i915,
+ 				      const struct intel_bios_encoder_data *devdata,
+-				      const struct edid *edid);
++				      const struct edid *edid, bool use_fallback);
+ 		int panel_type;
+ 	} panel_types[] = {
+ 		[PANEL_TYPE_OPREGION] = {
+@@ -744,7 +744,8 @@ static int get_panel_type(struct drm_i915_private *i915,
+ 	int i;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(panel_types); i++) {
+-		panel_types[i].panel_type = panel_types[i].get_panel_type(i915, devdata, edid);
++		panel_types[i].panel_type = panel_types[i].get_panel_type(i915, devdata,
++									  edid, use_fallback);
+ 
+ 		drm_WARN_ON(&i915->drm, panel_types[i].panel_type > 0xf &&
+ 			    panel_types[i].panel_type != 0xff);
+@@ -3183,15 +3184,27 @@ void intel_bios_init(struct drm_i915_private *i915)
+ 	kfree(oprom_vbt);
+ }
+ 
+-void intel_bios_init_panel(struct drm_i915_private *i915,
+-			   struct intel_panel *panel,
+-			   const struct intel_bios_encoder_data *devdata,
+-			   const struct edid *edid)
++static void intel_bios_init_panel(struct drm_i915_private *i915,
++				  struct intel_panel *panel,
++				  const struct intel_bios_encoder_data *devdata,
++				  const struct edid *edid,
++				  bool use_fallback)
+ {
++	/* already have it? */
++	if (panel->vbt.panel_type >= 0) {
++		drm_WARN_ON(&i915->drm, !use_fallback);
++		return;
++	}
++
++	panel->vbt.panel_type = get_panel_type(i915, devdata,
++					       edid, use_fallback);
++	if (panel->vbt.panel_type < 0) {
++		drm_WARN_ON(&i915->drm, use_fallback);
++		return;
++	}
++
+ 	init_vbt_panel_defaults(panel);
+ 
+-	panel->vbt.panel_type = get_panel_type(i915, devdata, edid);
+-
+ 	parse_panel_options(i915, panel);
+ 	parse_generic_dtd(i915, panel);
+ 	parse_lfp_data(i915, panel);
+@@ -3205,6 +3218,21 @@ void intel_bios_init_panel(struct drm_i915_private *i915,
+ 	parse_mipi_sequence(i915, panel);
+ }
+ 
++void intel_bios_init_panel_early(struct drm_i915_private *i915,
++				 struct intel_panel *panel,
++				 const struct intel_bios_encoder_data *devdata)
++{
++	intel_bios_init_panel(i915, panel, devdata, NULL, false);
++}
++
++void intel_bios_init_panel_late(struct drm_i915_private *i915,
++				struct intel_panel *panel,
++				const struct intel_bios_encoder_data *devdata,
++				const struct edid *edid)
++{
++	intel_bios_init_panel(i915, panel, devdata, edid, true);
++}
++
+ /**
+  * intel_bios_driver_remove - Free any resources allocated by intel_bios_init()
+  * @i915: i915 device instance
+diff --git a/drivers/gpu/drm/i915/display/intel_bios.h b/drivers/gpu/drm/i915/display/intel_bios.h
+index e375405a7828..ff1fdd2e0c1c 100644
+--- a/drivers/gpu/drm/i915/display/intel_bios.h
++++ b/drivers/gpu/drm/i915/display/intel_bios.h
+@@ -232,10 +232,13 @@ struct mipi_pps_data {
+ } __packed;
+ 
+ void intel_bios_init(struct drm_i915_private *dev_priv);
+-void intel_bios_init_panel(struct drm_i915_private *dev_priv,
+-			   struct intel_panel *panel,
+-			   const struct intel_bios_encoder_data *devdata,
+-			   const struct edid *edid);
++void intel_bios_init_panel_early(struct drm_i915_private *dev_priv,
++				 struct intel_panel *panel,
++				 const struct intel_bios_encoder_data *devdata);
++void intel_bios_init_panel_late(struct drm_i915_private *dev_priv,
++				struct intel_panel *panel,
++				const struct intel_bios_encoder_data *devdata,
++				const struct edid *edid);
+ void intel_bios_fini_panel(struct intel_panel *panel);
+ void intel_bios_driver_remove(struct drm_i915_private *dev_priv);
+ bool intel_bios_is_valid_vbt(const void *buf, size_t size);
+diff --git a/drivers/gpu/drm/i915/display/intel_display_types.h b/drivers/gpu/drm/i915/display/intel_display_types.h
+index ff3ef37d099e..cc64e787e401 100644
+--- a/drivers/gpu/drm/i915/display/intel_display_types.h
++++ b/drivers/gpu/drm/i915/display/intel_display_types.h
+@@ -291,7 +291,7 @@ struct intel_vbt_panel_data {
+ 	struct drm_display_mode *sdvo_lvds_vbt_mode; /* if any */
+ 
+ 	/* Feature bits */
+-	unsigned int panel_type:4;
++	int panel_type;
+ 	unsigned int lvds_dither:1;
+ 	unsigned int bios_lvds_val; /* initial [PCH_]LVDS reg val in VBIOS */
+ 
+diff --git a/drivers/gpu/drm/i915/display/intel_dp.c b/drivers/gpu/drm/i915/display/intel_dp.c
+index cf8a2f644bab..c1bebe77ed8e 100644
+--- a/drivers/gpu/drm/i915/display/intel_dp.c
++++ b/drivers/gpu/drm/i915/display/intel_dp.c
+@@ -5280,6 +5280,9 @@ static bool intel_edp_init_connector(struct intel_dp *intel_dp,
+ 		return false;
+ 	}
+ 
++	intel_bios_init_panel_early(dev_priv, &intel_connector->panel,
++				    encoder->devdata);
++
+ 	intel_pps_init(intel_dp);
+ 
+ 	/* Cache DPCD and EDID for edp. */
+@@ -5315,8 +5318,8 @@ static bool intel_edp_init_connector(struct intel_dp *intel_dp,
+ 	}
+ 	intel_connector->edid = edid;
+ 
+-	intel_bios_init_panel(dev_priv, &intel_connector->panel,
+-			      encoder->devdata, IS_ERR(edid) ? NULL : edid);
++	intel_bios_init_panel_late(dev_priv, &intel_connector->panel,
++				   encoder->devdata, IS_ERR(edid) ? NULL : edid);
+ 
+ 	intel_panel_add_edid_fixed_modes(intel_connector, true);
+ 
+diff --git a/drivers/gpu/drm/i915/display/intel_lvds.c b/drivers/gpu/drm/i915/display/intel_lvds.c
+index 7bf1bdfd03ec..aecec992cd0d 100644
+--- a/drivers/gpu/drm/i915/display/intel_lvds.c
++++ b/drivers/gpu/drm/i915/display/intel_lvds.c
+@@ -964,8 +964,8 @@ void intel_lvds_init(struct drm_i915_private *dev_priv)
+ 	}
+ 	intel_connector->edid = edid;
+ 
+-	intel_bios_init_panel(dev_priv, &intel_connector->panel, NULL,
+-			      IS_ERR(edid) ? NULL : edid);
++	intel_bios_init_panel_late(dev_priv, &intel_connector->panel, NULL,
++				   IS_ERR(edid) ? NULL : edid);
+ 
+ 	/* Try EDID first */
+ 	intel_panel_add_edid_fixed_modes(intel_connector, true);
+diff --git a/drivers/gpu/drm/i915/display/intel_panel.c b/drivers/gpu/drm/i915/display/intel_panel.c
+index b49228eb79e7..609fcdbd7d58 100644
+--- a/drivers/gpu/drm/i915/display/intel_panel.c
++++ b/drivers/gpu/drm/i915/display/intel_panel.c
+@@ -665,6 +665,7 @@ void intel_panel_init_alloc(struct intel_connector *connector)
+ {
+ 	struct intel_panel *panel = &connector->panel;
+ 
++	connector->panel.vbt.panel_type = -1;
+ 	INIT_LIST_HEAD(&panel->fixed_modes);
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/display/intel_sdvo.c b/drivers/gpu/drm/i915/display/intel_sdvo.c
+index 329b9d9af667..21805c15d5eb 100644
+--- a/drivers/gpu/drm/i915/display/intel_sdvo.c
++++ b/drivers/gpu/drm/i915/display/intel_sdvo.c
+@@ -2886,7 +2886,7 @@ intel_sdvo_lvds_init(struct intel_sdvo *intel_sdvo, u16 type)
+ 	if (!intel_sdvo_create_enhance_property(intel_sdvo, intel_sdvo_connector))
+ 		goto err;
+ 
+-	intel_bios_init_panel(i915, &intel_connector->panel, NULL, NULL);
++	intel_bios_init_panel_late(i915, &intel_connector->panel, NULL, NULL);
+ 
+ 	/*
+ 	 * Fetch modes from VBT. For SDVO prefer the VBT mode since some
+diff --git a/drivers/gpu/drm/i915/display/vlv_dsi.c b/drivers/gpu/drm/i915/display/vlv_dsi.c
+index 84481030883a..662bdb656aa3 100644
+--- a/drivers/gpu/drm/i915/display/vlv_dsi.c
++++ b/drivers/gpu/drm/i915/display/vlv_dsi.c
+@@ -1916,7 +1916,7 @@ void vlv_dsi_init(struct drm_i915_private *dev_priv)
+ 
+ 	intel_dsi->panel_power_off_time = ktime_get_boottime();
+ 
+-	intel_bios_init_panel(dev_priv, &intel_connector->panel, NULL, NULL);
++	intel_bios_init_panel_late(dev_priv, &intel_connector->panel, NULL, NULL);
+ 
+ 	if (intel_connector->panel.vbt.dsi.config->dual_link)
+ 		intel_dsi->ports = BIT(PORT_A) | BIT(PORT_C);
+
+From patchwork Fri Nov 25 17:31:50 2022
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Subject: [v2,3/9] drm/i915: Generalize the PPS vlv_pipe_check() stuff
+From: Ville Syrjala <ville.syrjala@linux.intel.com>
+X-Patchwork-Id: 513104
+Message-Id: <20221125173156.31689-4-ville.syrjala@linux.intel.com>
+To: intel-gfx@lists.freedesktop.org
+Cc: Jani Nikula <jani.nikula@intel.com>
+Date: Fri, 25 Nov 2022 19:31:50 +0200
+
+From: Ville Syrjälä <ville.syrjala@linux.intel.com>
+
+Restate the vlv_pipe_check() stuff in terms of PPS index
+(rather than pipe, which it is on VLV/CHV) so that we can
+reuse this same mechanim on other platforms as well.
+
+Cc: Animesh Manna <animesh.manna@intel.com>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+---
+ drivers/gpu/drm/i915/display/intel_pps.c | 27 ++++++++++--------------
+ 1 file changed, 11 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_pps.c b/drivers/gpu/drm/i915/display/intel_pps.c
+index 9bbf41a076f7..41ab12fcce0e 100644
+--- a/drivers/gpu/drm/i915/display/intel_pps.c
++++ b/drivers/gpu/drm/i915/display/intel_pps.c
+@@ -234,31 +234,26 @@ bxt_power_sequencer_idx(struct intel_dp *intel_dp)
+ 	return backlight_controller;
+ }
+ 
+-typedef bool (*vlv_pipe_check)(struct drm_i915_private *dev_priv,
+-			       enum pipe pipe);
++typedef bool (*pps_check)(struct drm_i915_private *dev_priv, int pps_idx);
+ 
+-static bool vlv_pipe_has_pp_on(struct drm_i915_private *dev_priv,
+-			       enum pipe pipe)
++static bool pps_has_pp_on(struct drm_i915_private *dev_priv, int pps_idx)
+ {
+-	return intel_de_read(dev_priv, PP_STATUS(pipe)) & PP_ON;
++	return intel_de_read(dev_priv, PP_STATUS(pps_idx)) & PP_ON;
+ }
+ 
+-static bool vlv_pipe_has_vdd_on(struct drm_i915_private *dev_priv,
+-				enum pipe pipe)
++static bool pps_has_vdd_on(struct drm_i915_private *dev_priv, int pps_idx)
+ {
+-	return intel_de_read(dev_priv, PP_CONTROL(pipe)) & EDP_FORCE_VDD;
++	return intel_de_read(dev_priv, PP_CONTROL(pps_idx)) & EDP_FORCE_VDD;
+ }
+ 
+-static bool vlv_pipe_any(struct drm_i915_private *dev_priv,
+-			 enum pipe pipe)
++static bool pps_any(struct drm_i915_private *dev_priv, int pps_idx)
+ {
+ 	return true;
+ }
+ 
+ static enum pipe
+ vlv_initial_pps_pipe(struct drm_i915_private *dev_priv,
+-		     enum port port,
+-		     vlv_pipe_check pipe_check)
++		     enum port port, pps_check check)
+ {
+ 	enum pipe pipe;
+ 
+@@ -269,7 +264,7 @@ vlv_initial_pps_pipe(struct drm_i915_private *dev_priv,
+ 		if (port_sel != PANEL_PORT_SELECT_VLV(port))
+ 			continue;
+ 
+-		if (!pipe_check(dev_priv, pipe))
++		if (!check(dev_priv, pipe))
+ 			continue;
+ 
+ 		return pipe;
+@@ -290,15 +285,15 @@ vlv_initial_power_sequencer_setup(struct intel_dp *intel_dp)
+ 	/* try to find a pipe with this port selected */
+ 	/* first pick one where the panel is on */
+ 	intel_dp->pps.pps_pipe = vlv_initial_pps_pipe(dev_priv, port,
+-						      vlv_pipe_has_pp_on);
++						      pps_has_pp_on);
+ 	/* didn't find one? pick one where vdd is on */
+ 	if (intel_dp->pps.pps_pipe == INVALID_PIPE)
+ 		intel_dp->pps.pps_pipe = vlv_initial_pps_pipe(dev_priv, port,
+-							      vlv_pipe_has_vdd_on);
++							      pps_has_vdd_on);
+ 	/* didn't find one? pick one with just the correct port */
+ 	if (intel_dp->pps.pps_pipe == INVALID_PIPE)
+ 		intel_dp->pps.pps_pipe = vlv_initial_pps_pipe(dev_priv, port,
+-							      vlv_pipe_any);
++							      pps_any);
+ 
+ 	/* didn't find one? just let vlv_power_sequencer_pipe() pick one when needed */
+ 	if (intel_dp->pps.pps_pipe == INVALID_PIPE) {
+
+From patchwork Fri Nov 25 17:31:51 2022
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Subject: [v2,4/9] drm/i915: Try to use the correct power sequencer intiially
+ on bxt/glk
+From: Ville Syrjala <ville.syrjala@linux.intel.com>
+X-Patchwork-Id: 513100
+Message-Id: <20221125173156.31689-5-ville.syrjala@linux.intel.com>
+To: intel-gfx@lists.freedesktop.org
+Date: Fri, 25 Nov 2022 19:31:51 +0200
+
+From: Ville Syrjälä <ville.syrjala@linux.intel.com>
+
+Currently on bxt/glk we just grab the power sequencer index from
+the VBT data even though it may not have been parsed yet. That
+could lead us to using the incorrect power sequencer during the
+initial panel probe.
+
+To avoid that let's try to read out the current state of the
+power sequencer from the hardware. Unfortunately the power
+sequencer no longer has anything in its registers to associate
+it with the port, so the best we can do is just iterate through
+the power sequencers and pick the first one. This should be
+sufficient for single panel cases.
+
+For the dual panel cases we probably need to go back to
+parsing the VBT before the panel probe (and hope that
+panel_type=0xff is never a thing in those cases). To that
+end the code always prefers the VBT panel sequencer, if
+available.
+
+v2: Restructure a bit for upcoming icp+ dual PPS support
+
+Cc: Animesh Manna <animesh.manna@intel.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+Reviewed-by: Animesh Manna <animesh.manna@intel.com>
+---
+ .../drm/i915/display/intel_display_types.h    | 22 +++--
+ drivers/gpu/drm/i915/display/intel_panel.c    |  1 +
+ drivers/gpu/drm/i915/display/intel_pps.c      | 96 +++++++++++++++++--
+ 3 files changed, 102 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_display_types.h b/drivers/gpu/drm/i915/display/intel_display_types.h
+index cc64e787e401..32e8b2fc3cc6 100644
+--- a/drivers/gpu/drm/i915/display/intel_display_types.h
++++ b/drivers/gpu/drm/i915/display/intel_display_types.h
+@@ -330,7 +330,7 @@ struct intel_vbt_panel_data {
+ 		bool present;
+ 		bool active_low_pwm;
+ 		u8 min_brightness;	/* min_brightness/255 of max */
+-		u8 controller;		/* brightness controller number */
++		s8 controller;		/* brightness controller number */
+ 		enum intel_backlight_type type;
+ 	} backlight;
+ 
+@@ -1570,11 +1570,19 @@ struct intel_pps {
+ 	ktime_t panel_power_off_time;
+ 	intel_wakeref_t vdd_wakeref;
+ 
+-	/*
+-	 * Pipe whose power sequencer is currently locked into
+-	 * this port. Only relevant on VLV/CHV.
+-	 */
+-	enum pipe pps_pipe;
++	union {
++		/*
++		 * Pipe whose power sequencer is currently locked into
++		 * this port. Only relevant on VLV/CHV.
++		 */
++		enum pipe pps_pipe;
++
++		/*
++		 * Power sequencer index. Only relevant on BXT+.
++		 */
++		int pps_idx;
++	};
++
+ 	/*
+ 	 * Pipe currently driving the port. Used for preventing
+ 	 * the use of the PPS for any pipe currentrly driving
+@@ -1583,7 +1591,7 @@ struct intel_pps {
+ 	enum pipe active_pipe;
+ 	/*
+ 	 * Set if the sequencer may be reset due to a power transition,
+-	 * requiring a reinitialization. Only relevant on BXT.
++	 * requiring a reinitialization. Only relevant on BXT+.
+ 	 */
+ 	bool pps_reset;
+ 	struct edp_power_seq pps_delays;
+diff --git a/drivers/gpu/drm/i915/display/intel_panel.c b/drivers/gpu/drm/i915/display/intel_panel.c
+index 609fcdbd7d58..3b1004b019a8 100644
+--- a/drivers/gpu/drm/i915/display/intel_panel.c
++++ b/drivers/gpu/drm/i915/display/intel_panel.c
+@@ -666,6 +666,7 @@ void intel_panel_init_alloc(struct intel_connector *connector)
+ 	struct intel_panel *panel = &connector->panel;
+ 
+ 	connector->panel.vbt.panel_type = -1;
++	connector->panel.vbt.backlight.controller = -1;
+ 	INIT_LIST_HEAD(&panel->fixed_modes);
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/display/intel_pps.c b/drivers/gpu/drm/i915/display/intel_pps.c
+index 41ab12fcce0e..d8d2f22f3e0c 100644
+--- a/drivers/gpu/drm/i915/display/intel_pps.c
++++ b/drivers/gpu/drm/i915/display/intel_pps.c
+@@ -212,8 +212,7 @@ static int
+ bxt_power_sequencer_idx(struct intel_dp *intel_dp)
+ {
+ 	struct drm_i915_private *dev_priv = dp_to_i915(intel_dp);
+-	struct intel_connector *connector = intel_dp->attached_connector;
+-	int backlight_controller = connector->panel.vbt.backlight.controller;
++	int pps_idx = intel_dp->pps.pps_idx;
+ 
+ 	lockdep_assert_held(&dev_priv->display.pps.mutex);
+ 
+@@ -221,7 +220,7 @@ bxt_power_sequencer_idx(struct intel_dp *intel_dp)
+ 	drm_WARN_ON(&dev_priv->drm, !intel_dp_is_edp(intel_dp));
+ 
+ 	if (!intel_dp->pps.pps_reset)
+-		return backlight_controller;
++		return pps_idx;
+ 
+ 	intel_dp->pps.pps_reset = false;
+ 
+@@ -231,7 +230,7 @@ bxt_power_sequencer_idx(struct intel_dp *intel_dp)
+ 	 */
+ 	pps_init_registers(intel_dp, false);
+ 
+-	return backlight_controller;
++	return pps_idx;
+ }
+ 
+ typedef bool (*pps_check)(struct drm_i915_private *dev_priv, int pps_idx);
+@@ -311,6 +310,64 @@ vlv_initial_power_sequencer_setup(struct intel_dp *intel_dp)
+ 		    pipe_name(intel_dp->pps.pps_pipe));
+ }
+ 
++static int
++bxt_initial_pps_idx(struct drm_i915_private *i915, pps_check check)
++{
++	int pps_idx, pps_num = 2;
++
++	for (pps_idx = 0; pps_idx < pps_num; pps_idx++) {
++		if (check(i915, pps_idx))
++			return pps_idx;
++	}
++
++	return -1;
++}
++
++static void
++pps_initial_setup(struct intel_dp *intel_dp)
++{
++	struct intel_encoder *encoder = &dp_to_dig_port(intel_dp)->base;
++	struct intel_connector *connector = intel_dp->attached_connector;
++	struct drm_i915_private *i915 = to_i915(encoder->base.dev);
++
++	lockdep_assert_held(&i915->display.pps.mutex);
++
++	if (IS_VALLEYVIEW(i915) || IS_CHERRYVIEW(i915)) {
++		vlv_initial_power_sequencer_setup(intel_dp);
++		return;
++	}
++
++	if (!IS_GEMINILAKE(i915) && !IS_BROXTON(i915))
++		return;
++
++	/* first ask the VBT */
++	intel_dp->pps.pps_idx = connector->panel.vbt.backlight.controller;
++	if (drm_WARN_ON(&i915->drm, intel_dp->pps.pps_idx >= 2))
++		intel_dp->pps.pps_idx = -1;
++
++	/* VBT wasn't parsed yet? pick one where the panel is on */
++	if (intel_dp->pps.pps_idx < 0)
++		intel_dp->pps.pps_idx = bxt_initial_pps_idx(i915, pps_has_pp_on);
++	/* didn't find one? pick one where vdd is on */
++	if (intel_dp->pps.pps_idx < 0)
++		intel_dp->pps.pps_idx = bxt_initial_pps_idx(i915, pps_has_vdd_on);
++	/* didn't find one? pick any */
++	if (intel_dp->pps.pps_idx < 0) {
++		intel_dp->pps.pps_idx = bxt_initial_pps_idx(i915, pps_any);
++
++		drm_dbg_kms(&i915->drm,
++			    "[ENCODER:%d:%s] no initial power sequencer, assuming %d\n",
++			    encoder->base.base.id, encoder->base.name,
++			    intel_dp->pps.pps_idx);
++		return;
++	}
++
++	drm_dbg_kms(&i915->drm,
++		    "[ENCODER:%d:%s] initial power sequencer: %d\n",
++		    encoder->base.base.id, encoder->base.name,
++		    intel_dp->pps.pps_idx);
++}
++
+ void intel_pps_reset_all(struct drm_i915_private *dev_priv)
+ {
+ 	struct intel_encoder *encoder;
+@@ -363,10 +420,10 @@ static void intel_pps_get_registers(struct intel_dp *intel_dp,
+ 
+ 	memset(regs, 0, sizeof(*regs));
+ 
+-	if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv))
+-		pps_idx = bxt_power_sequencer_idx(intel_dp);
+-	else if (IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv))
++	if (IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv))
+ 		pps_idx = vlv_power_sequencer_pipe(intel_dp);
++	else if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv))
++		pps_idx = bxt_power_sequencer_idx(intel_dp);
+ 
+ 	regs->pp_ctrl = PP_CONTROL(pps_idx);
+ 	regs->pp_stat = PP_STATUS(pps_idx);
+@@ -1429,7 +1486,6 @@ void intel_pps_encoder_reset(struct intel_dp *intel_dp)
+ 
+ void intel_pps_init(struct intel_dp *intel_dp)
+ {
+-	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
+ 	intel_wakeref_t wakeref;
+ 
+ 	intel_dp->pps.initializing = true;
+@@ -1438,8 +1494,7 @@ void intel_pps_init(struct intel_dp *intel_dp)
+ 	pps_init_timestamps(intel_dp);
+ 
+ 	with_intel_pps_lock(intel_dp, wakeref) {
+-		if (IS_VALLEYVIEW(i915) || IS_CHERRYVIEW(i915))
+-			vlv_initial_power_sequencer_setup(intel_dp);
++		pps_initial_setup(intel_dp);
+ 
+ 		pps_init_delays(intel_dp);
+ 		pps_init_registers(intel_dp, false);
+@@ -1447,12 +1502,33 @@ void intel_pps_init(struct intel_dp *intel_dp)
+ 	}
+ }
+ 
++static void pps_init_late(struct intel_dp *intel_dp)
++{
++	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
++	struct intel_encoder *encoder = &dp_to_dig_port(intel_dp)->base;
++	struct intel_connector *connector = intel_dp->attached_connector;
++
++	if (!IS_GEMINILAKE(i915) && !IS_BROXTON(i915))
++		return;
++
++	drm_WARN(&i915->drm, connector->panel.vbt.backlight.controller >= 0 &&
++		 intel_dp->pps.pps_idx != connector->panel.vbt.backlight.controller,
++		 "[ENCODER:%d:%s] power sequencer mismatch: %d (initial) vs. %d (VBT)\n",
++		 encoder->base.base.id, encoder->base.name,
++		 intel_dp->pps.pps_idx, connector->panel.vbt.backlight.controller);
++
++	if (connector->panel.vbt.backlight.controller >= 0)
++		intel_dp->pps.pps_idx = connector->panel.vbt.backlight.controller;
++}
++
+ void intel_pps_init_late(struct intel_dp *intel_dp)
+ {
+ 	intel_wakeref_t wakeref;
+ 
+ 	with_intel_pps_lock(intel_dp, wakeref) {
+ 		/* Reinit delays after per-panel info has been parsed from VBT */
++		pps_init_late(intel_dp);
++
+ 		memset(&intel_dp->pps.pps_delays, 0, sizeof(intel_dp->pps.pps_delays));
+ 		pps_init_delays(intel_dp);
+ 		pps_init_registers(intel_dp, false);
+
+From patchwork Fri Nov 25 17:31:52 2022
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Subject: [v2,5/9] drm/i915: Extend dual PPS handlind for ICP+
+From: Ville Syrjala <ville.syrjala@linux.intel.com>
+X-Patchwork-Id: 513101
+Message-Id: <20221125173156.31689-6-ville.syrjala@linux.intel.com>
+To: intel-gfx@lists.freedesktop.org
+Date: Fri, 25 Nov 2022 19:31:52 +0200
+
+From: Ville Syrjälä <ville.syrjala@linux.intel.com>
+
+On the PCH side the second PPS was introduced in ICP. Let's
+make sure we examine both power sequencer on ICP+ as well.
+
+Note that DG1/2 south block only has the single PPS, so need
+to exclude the fake DG1/2 PCHs.
+
+Cc: Animesh Manna <animesh.manna@intel.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+Reviewed-by: Animesh Manna <animesh.manna@intel.com>
+---
+ drivers/gpu/drm/i915/display/intel_pps.c | 44 +++++++++++++++++-------
+ 1 file changed, 32 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_pps.c b/drivers/gpu/drm/i915/display/intel_pps.c
+index d8d2f22f3e0c..77b0a4f27abc 100644
+--- a/drivers/gpu/drm/i915/display/intel_pps.c
++++ b/drivers/gpu/drm/i915/display/intel_pps.c
+@@ -310,10 +310,27 @@ vlv_initial_power_sequencer_setup(struct intel_dp *intel_dp)
+ 		    pipe_name(intel_dp->pps.pps_pipe));
+ }
+ 
++static int intel_num_pps(struct drm_i915_private *i915)
++{
++	if (IS_VALLEYVIEW(i915) || IS_CHERRYVIEW(i915))
++		return 2;
++
++	if (IS_GEMINILAKE(i915) || IS_BROXTON(i915))
++		return 2;
++
++	if (INTEL_PCH_TYPE(i915) >= PCH_DG1)
++		return 1;
++
++	if (INTEL_PCH_TYPE(i915) >= PCH_ICP)
++		return 2;
++
++	return 1;
++}
++
+ static int
+ bxt_initial_pps_idx(struct drm_i915_private *i915, pps_check check)
+ {
+-	int pps_idx, pps_num = 2;
++	int pps_idx, pps_num = intel_num_pps(i915);
+ 
+ 	for (pps_idx = 0; pps_idx < pps_num; pps_idx++) {
+ 		if (check(i915, pps_idx))
+@@ -337,12 +354,13 @@ pps_initial_setup(struct intel_dp *intel_dp)
+ 		return;
+ 	}
+ 
+-	if (!IS_GEMINILAKE(i915) && !IS_BROXTON(i915))
+-		return;
+-
+ 	/* first ask the VBT */
+-	intel_dp->pps.pps_idx = connector->panel.vbt.backlight.controller;
+-	if (drm_WARN_ON(&i915->drm, intel_dp->pps.pps_idx >= 2))
++	if (intel_num_pps(i915) > 1)
++		intel_dp->pps.pps_idx = connector->panel.vbt.backlight.controller;
++	else
++		intel_dp->pps.pps_idx = 0;
++
++	if (drm_WARN_ON(&i915->drm, intel_dp->pps.pps_idx >= intel_num_pps(i915)))
+ 		intel_dp->pps.pps_idx = -1;
+ 
+ 	/* VBT wasn't parsed yet? pick one where the panel is on */
+@@ -416,7 +434,7 @@ static void intel_pps_get_registers(struct intel_dp *intel_dp,
+ 				    struct pps_registers *regs)
+ {
+ 	struct drm_i915_private *dev_priv = dp_to_i915(intel_dp);
+-	int pps_idx = 0;
++	int pps_idx;
+ 
+ 	memset(regs, 0, sizeof(*regs));
+ 
+@@ -424,6 +442,8 @@ static void intel_pps_get_registers(struct intel_dp *intel_dp,
+ 		pps_idx = vlv_power_sequencer_pipe(intel_dp);
+ 	else if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv))
+ 		pps_idx = bxt_power_sequencer_idx(intel_dp);
++	else
++		pps_idx = intel_dp->pps.pps_idx;
+ 
+ 	regs->pp_ctrl = PP_CONTROL(pps_idx);
+ 	regs->pp_stat = PP_STATUS(pps_idx);
+@@ -1508,7 +1528,10 @@ static void pps_init_late(struct intel_dp *intel_dp)
+ 	struct intel_encoder *encoder = &dp_to_dig_port(intel_dp)->base;
+ 	struct intel_connector *connector = intel_dp->attached_connector;
+ 
+-	if (!IS_GEMINILAKE(i915) && !IS_BROXTON(i915))
++	if (IS_VALLEYVIEW(i915) || IS_CHERRYVIEW(i915))
++		return;
++
++	if (intel_num_pps(i915) < 2)
+ 		return;
+ 
+ 	drm_WARN(&i915->drm, connector->panel.vbt.backlight.controller >= 0 &&
+@@ -1551,10 +1574,7 @@ void intel_pps_unlock_regs_wa(struct drm_i915_private *dev_priv)
+ 	 * This w/a is needed at least on CPT/PPT, but to be sure apply it
+ 	 * everywhere where registers can be write protected.
+ 	 */
+-	if (IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv))
+-		pps_num = 2;
+-	else
+-		pps_num = 1;
++	pps_num = intel_num_pps(dev_priv);
+ 
+ 	for (pps_idx = 0; pps_idx < pps_num; pps_idx++) {
+ 		u32 val = intel_de_read(dev_priv, PP_CONTROL(pps_idx));
+
+From patchwork Fri Nov 25 17:31:53 2022
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Subject: [v2,6/9] drm/i915: Reject unusablee power sequencers
+From: Ville Syrjala <ville.syrjala@linux.intel.com>
+X-Patchwork-Id: 513106
+Message-Id: <20221125173156.31689-7-ville.syrjala@linux.intel.com>
+To: intel-gfx@lists.freedesktop.org
+Date: Fri, 25 Nov 2022 19:31:53 +0200
+
+From: Ville Syrjälä <ville.syrjala@linux.intel.com>
+
+On ICP-ADP the pins used by the second PPS can be alternatively
+muxed to some other function. In that case the second power
+sequencer is unusable.
+
+Unfortunately (on my ADL Thinkpad T14 gen3 at least) the
+BIOS still likes to enable the VDD on the second PPS (due
+to the VBT declaring the second bogus eDP panel) even when
+not correctly muxed, so we need to deal with it somehow.
+For now let's just initialize the PPS as normal, and then
+use the normal eDP probe failure VDD off path to turn it off
+(and release the wakeref the PPS init grabbed). The
+alternative of just declaring that the platform has a single
+PPS doesn't really work since it would cause the second eDP
+probe to also try to use the first PPS and thus clobber the
+state for the first (real) eDP panel.
+
+Cc: Animesh Manna <animesh.manna@intel.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+Reviewed-by: Animesh Manna <animesh.manna@intel.com>
+---
+ drivers/gpu/drm/i915/display/intel_dp.c  | 12 ++++++++-
+ drivers/gpu/drm/i915/display/intel_pps.c | 34 +++++++++++++++++-------
+ drivers/gpu/drm/i915/display/intel_pps.h |  2 +-
+ drivers/gpu/drm/i915/i915_reg.h          |  1 +
+ 4 files changed, 38 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_dp.c b/drivers/gpu/drm/i915/display/intel_dp.c
+index c1bebe77ed8e..9deaa5e3632a 100644
+--- a/drivers/gpu/drm/i915/display/intel_dp.c
++++ b/drivers/gpu/drm/i915/display/intel_dp.c
+@@ -5283,7 +5283,17 @@ static bool intel_edp_init_connector(struct intel_dp *intel_dp,
+ 	intel_bios_init_panel_early(dev_priv, &intel_connector->panel,
+ 				    encoder->devdata);
+ 
+-	intel_pps_init(intel_dp);
++	if (!intel_pps_init(intel_dp)) {
++		drm_info(&dev_priv->drm,
++			 "[ENCODER:%d:%s] unusable PPS, disabling eDP\n",
++			 encoder->base.base.id, encoder->base.name);
++		/*
++		 * The BIOS may have still enabled VDD on the PPS even
++		 * though it's unusable. Make sure we turn it back off
++		 * and to release the power domain references/etc.
++		 */
++		goto out_vdd_off;
++	}
+ 
+ 	/* Cache DPCD and EDID for edp. */
+ 	has_dpcd = intel_edp_init_dpcd(intel_dp);
+diff --git a/drivers/gpu/drm/i915/display/intel_pps.c b/drivers/gpu/drm/i915/display/intel_pps.c
+index 77b0a4f27abc..d18c1c58dfcf 100644
+--- a/drivers/gpu/drm/i915/display/intel_pps.c
++++ b/drivers/gpu/drm/i915/display/intel_pps.c
+@@ -327,6 +327,18 @@ static int intel_num_pps(struct drm_i915_private *i915)
+ 	return 1;
+ }
+ 
++static bool intel_pps_is_valid(struct intel_dp *intel_dp)
++{
++	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
++
++	if (intel_dp->pps.pps_idx == 1 &&
++	    INTEL_PCH_TYPE(i915) >= PCH_ICP &&
++	    INTEL_PCH_TYPE(i915) < PCH_MTP)
++		return intel_de_read(i915, SOUTH_CHICKEN1) & ICP_SECOND_PPS_IO_SELECT;
++
++	return true;
++}
++
+ static int
+ bxt_initial_pps_idx(struct drm_i915_private *i915, pps_check check)
+ {
+@@ -340,7 +352,7 @@ bxt_initial_pps_idx(struct drm_i915_private *i915, pps_check check)
+ 	return -1;
+ }
+ 
+-static void
++static bool
+ pps_initial_setup(struct intel_dp *intel_dp)
+ {
+ 	struct intel_encoder *encoder = &dp_to_dig_port(intel_dp)->base;
+@@ -351,7 +363,7 @@ pps_initial_setup(struct intel_dp *intel_dp)
+ 
+ 	if (IS_VALLEYVIEW(i915) || IS_CHERRYVIEW(i915)) {
+ 		vlv_initial_power_sequencer_setup(intel_dp);
+-		return;
++		return true;
+ 	}
+ 
+ 	/* first ask the VBT */
+@@ -377,13 +389,14 @@ pps_initial_setup(struct intel_dp *intel_dp)
+ 			    "[ENCODER:%d:%s] no initial power sequencer, assuming %d\n",
+ 			    encoder->base.base.id, encoder->base.name,
+ 			    intel_dp->pps.pps_idx);
+-		return;
++	} else {
++		drm_dbg_kms(&i915->drm,
++			    "[ENCODER:%d:%s] initial power sequencer: %d\n",
++			    encoder->base.base.id, encoder->base.name,
++			    intel_dp->pps.pps_idx);
+ 	}
+ 
+-	drm_dbg_kms(&i915->drm,
+-		    "[ENCODER:%d:%s] initial power sequencer: %d\n",
+-		    encoder->base.base.id, encoder->base.name,
+-		    intel_dp->pps.pps_idx);
++	return intel_pps_is_valid(intel_dp);
+ }
+ 
+ void intel_pps_reset_all(struct drm_i915_private *dev_priv)
+@@ -1504,9 +1517,10 @@ void intel_pps_encoder_reset(struct intel_dp *intel_dp)
+ 	}
+ }
+ 
+-void intel_pps_init(struct intel_dp *intel_dp)
++bool intel_pps_init(struct intel_dp *intel_dp)
+ {
+ 	intel_wakeref_t wakeref;
++	bool ret;
+ 
+ 	intel_dp->pps.initializing = true;
+ 	INIT_DELAYED_WORK(&intel_dp->pps.panel_vdd_work, edp_panel_vdd_work);
+@@ -1514,12 +1528,14 @@ void intel_pps_init(struct intel_dp *intel_dp)
+ 	pps_init_timestamps(intel_dp);
+ 
+ 	with_intel_pps_lock(intel_dp, wakeref) {
+-		pps_initial_setup(intel_dp);
++		ret = pps_initial_setup(intel_dp);
+ 
+ 		pps_init_delays(intel_dp);
+ 		pps_init_registers(intel_dp, false);
+ 		pps_vdd_init(intel_dp);
+ 	}
++
++	return ret;
+ }
+ 
+ static void pps_init_late(struct intel_dp *intel_dp)
+diff --git a/drivers/gpu/drm/i915/display/intel_pps.h b/drivers/gpu/drm/i915/display/intel_pps.h
+index a3a56f903f26..a2c2467e3c22 100644
+--- a/drivers/gpu/drm/i915/display/intel_pps.h
++++ b/drivers/gpu/drm/i915/display/intel_pps.h
+@@ -40,7 +40,7 @@ void intel_pps_vdd_off_sync(struct intel_dp *intel_dp);
+ bool intel_pps_have_panel_power_or_vdd(struct intel_dp *intel_dp);
+ void intel_pps_wait_power_cycle(struct intel_dp *intel_dp);
+ 
+-void intel_pps_init(struct intel_dp *intel_dp);
++bool intel_pps_init(struct intel_dp *intel_dp);
+ void intel_pps_init_late(struct intel_dp *intel_dp);
+ void intel_pps_encoder_reset(struct intel_dp *intel_dp);
+ void intel_pps_reset_all(struct drm_i915_private *i915);
+diff --git a/drivers/gpu/drm/i915/i915_reg.h b/drivers/gpu/drm/i915/i915_reg.h
+index 0b90fe6a28f7..ebb45935750c 100644
+--- a/drivers/gpu/drm/i915/i915_reg.h
++++ b/drivers/gpu/drm/i915/i915_reg.h
+@@ -6242,6 +6242,7 @@
+ #define  CHASSIS_CLK_REQ_DURATION_MASK	(0xf << 8)
+ #define  CHASSIS_CLK_REQ_DURATION(x)	((x) << 8)
+ #define  SBCLK_RUN_REFCLK_DIS		(1 << 7)
++#define  ICP_SECOND_PPS_IO_SELECT	REG_BIT(2)
+ #define  SPT_PWM_GRANULARITY		(1 << 0)
+ #define SOUTH_CHICKEN2		_MMIO(0xc2004)
+ #define  FDI_MPHY_IOSFSB_RESET_STATUS	(1 << 13)
+
+From patchwork Fri Nov 25 17:31:54 2022
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Subject: [v2,7/9] drm/i915: Print the PPS registers using consistent format
+From: Ville Syrjala <ville.syrjala@linux.intel.com>
+X-Patchwork-Id: 513103
+Message-Id: <20221125173156.31689-8-ville.syrjala@linux.intel.com>
+To: intel-gfx@lists.freedesktop.org
+Date: Fri, 25 Nov 2022 19:31:54 +0200
+
+From: Ville Syrjälä <ville.syrjala@linux.intel.com>
+
+Use the consistent format when dumping out the PPS control/status
+registers. Helps with pattern matching.
+
+Cc: Animesh Manna <animesh.manna@intel.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+Reviewed-by: Animesh Manna <animesh.manna@intel.com>
+---
+ drivers/gpu/drm/i915/display/intel_pps.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_pps.c b/drivers/gpu/drm/i915/display/intel_pps.c
+index d18c1c58dfcf..f6bc896338de 100644
+--- a/drivers/gpu/drm/i915/display/intel_pps.c
++++ b/drivers/gpu/drm/i915/display/intel_pps.c
+@@ -527,7 +527,8 @@ void intel_pps_check_power_unlocked(struct intel_dp *intel_dp)
+ 	if (!edp_have_panel_power(intel_dp) && !edp_have_panel_vdd(intel_dp)) {
+ 		drm_WARN(&dev_priv->drm, 1,
+ 			 "eDP powered off while attempting aux channel communication.\n");
+-		drm_dbg_kms(&dev_priv->drm, "Status 0x%08x Control 0x%08x\n",
++		drm_dbg_kms(&dev_priv->drm,
++			    "PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
+ 			    intel_de_read(dev_priv, _pp_stat_reg(intel_dp)),
+ 			    intel_de_read(dev_priv, _pp_ctrl_reg(intel_dp)));
+ 	}
+@@ -559,7 +560,7 @@ static void wait_panel_status(struct intel_dp *intel_dp,
+ 	pp_ctrl_reg = _pp_ctrl_reg(intel_dp);
+ 
+ 	drm_dbg_kms(&dev_priv->drm,
+-		    "mask %08x value %08x status %08x control %08x\n",
++		    "mask: 0x%08x value: 0x%08x PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
+ 		    mask, value,
+ 		    intel_de_read(dev_priv, pp_stat_reg),
+ 		    intel_de_read(dev_priv, pp_ctrl_reg));
+@@ -567,7 +568,7 @@ static void wait_panel_status(struct intel_dp *intel_dp,
+ 	if (intel_de_wait_for_register(dev_priv, pp_stat_reg,
+ 				       mask, value, 5000))
+ 		drm_err(&dev_priv->drm,
+-			"Panel status timeout: status %08x control %08x\n",
++			"Panel status timeout: PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
+ 			intel_de_read(dev_priv, pp_stat_reg),
+ 			intel_de_read(dev_priv, pp_ctrl_reg));
+ 
+
+From patchwork Fri Nov 25 17:31:55 2022
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Subject: [v2,8/9] drm/i915: Fix whitespace
+From: Ville Syrjala <ville.syrjala@linux.intel.com>
+X-Patchwork-Id: 513102
+Message-Id: <20221125173156.31689-9-ville.syrjala@linux.intel.com>
+To: intel-gfx@lists.freedesktop.org
+Date: Fri, 25 Nov 2022 19:31:55 +0200
+
+From: Ville Syrjälä <ville.syrjala@linux.intel.com>
+
+Stray spaces have snuck in where everything else uses tabs.
+
+Cc: Animesh Manna <animesh.manna@intel.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+Reviewed-by: Animesh Manna <animesh.manna@intel.com>
+---
+ drivers/gpu/drm/i915/display/intel_pps.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_pps.c b/drivers/gpu/drm/i915/display/intel_pps.c
+index f6bc896338de..880c530d5832 100644
+--- a/drivers/gpu/drm/i915/display/intel_pps.c
++++ b/drivers/gpu/drm/i915/display/intel_pps.c
+@@ -535,7 +535,7 @@ void intel_pps_check_power_unlocked(struct intel_dp *intel_dp)
+ }
+ 
+ #define IDLE_ON_MASK		(PP_ON | PP_SEQUENCE_MASK | 0                     | PP_SEQUENCE_STATE_MASK)
+-#define IDLE_ON_VALUE   	(PP_ON | PP_SEQUENCE_NONE | 0                     | PP_SEQUENCE_STATE_ON_IDLE)
++#define IDLE_ON_VALUE		(PP_ON | PP_SEQUENCE_NONE | 0                     | PP_SEQUENCE_STATE_ON_IDLE)
+ 
+ #define IDLE_OFF_MASK		(PP_ON | PP_SEQUENCE_MASK | 0                     | 0)
+ #define IDLE_OFF_VALUE		(0     | PP_SEQUENCE_NONE | 0                     | 0)
+
+From patchwork Sun Nov 27 15:52:39 2022
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Subject: [v4,9/9] drm/i915: Improve PPS debugs
+From: Ville Syrjala <ville.syrjala@linux.intel.com>
+X-Patchwork-Id: 513156
+Message-Id: <20221127155239.26973-1-ville.syrjala@linux.intel.com>
+To: intel-gfx@lists.freedesktop.org
+Date: Sun, 27 Nov 2022 17:52:39 +0200
+
+From: Ville Syrjälä <ville.syrjala@linux.intel.com>
+
+Always include both the encoder and PPS instance information
+in the debug prints so that we know what piece of hardware
+we're actually dealing with.
+
+v2: Make sure pps is selected before debug prints/etc. in
+    intel_pps_vdd_on_unlocked() on vlv/chv
+    There is no pps on pipe C on chv
+v3: Allow PPS=INVALID_PIPE for vlv/chv
+
+Cc: Animesh Manna <animesh.manna@intel.com>
+Signed-off-by: Ville Syrjälä <ville.syrjala@linux.intel.com>
+---
+ drivers/gpu/drm/i915/display/intel_pps.c | 194 +++++++++++++++--------
+ 1 file changed, 128 insertions(+), 66 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_pps.c b/drivers/gpu/drm/i915/display/intel_pps.c
+index 880c530d5832..7b21438edd9b 100644
+--- a/drivers/gpu/drm/i915/display/intel_pps.c
++++ b/drivers/gpu/drm/i915/display/intel_pps.c
+@@ -22,6 +22,40 @@ static void vlv_steal_power_sequencer(struct drm_i915_private *dev_priv,
+ static void pps_init_delays(struct intel_dp *intel_dp);
+ static void pps_init_registers(struct intel_dp *intel_dp, bool force_disable_vdd);
+ 
++static const char *pps_name(struct drm_i915_private *i915,
++			    struct intel_pps *pps)
++{
++	if (IS_VALLEYVIEW(i915) || IS_CHERRYVIEW(i915)) {
++		switch (pps->pps_pipe) {
++		case INVALID_PIPE:
++			/*
++			 * FIXME would be nice if we can guarantee
++			 * to always have a valid PPS when calling this.
++			 */
++			return "PPS <none>";
++		case PIPE_A:
++			return "PPS A";
++		case PIPE_B:
++			return "PPS B";
++		default:
++			MISSING_CASE(pps->pps_pipe);
++			break;
++		}
++	} else {
++		switch (pps->pps_idx) {
++		case 0:
++			return "PPS 0";
++		case 1:
++			return "PPS 1";
++		default:
++			MISSING_CASE(pps->pps_idx);
++			break;
++		}
++	}
++
++	return "PPS <invalid>";
++}
++
+ intel_wakeref_t intel_pps_lock(struct intel_dp *intel_dp)
+ {
+ 	struct drm_i915_private *dev_priv = dp_to_i915(intel_dp);
+@@ -60,15 +94,15 @@ vlv_power_sequencer_kick(struct intel_dp *intel_dp)
+ 
+ 	if (drm_WARN(&dev_priv->drm,
+ 		     intel_de_read(dev_priv, intel_dp->output_reg) & DP_PORT_EN,
+-		     "skipping pipe %c power sequencer kick due to [ENCODER:%d:%s] being active\n",
+-		     pipe_name(pipe), dig_port->base.base.base.id,
+-		     dig_port->base.base.name))
++		     "skipping %s kick due to [ENCODER:%d:%s] being active\n",
++		     pps_name(dev_priv, &intel_dp->pps),
++		     dig_port->base.base.base.id, dig_port->base.base.name))
+ 		return;
+ 
+ 	drm_dbg_kms(&dev_priv->drm,
+-		    "kicking pipe %c power sequencer for [ENCODER:%d:%s]\n",
+-		    pipe_name(pipe), dig_port->base.base.base.id,
+-		    dig_port->base.base.name);
++		    "kicking %s for [ENCODER:%d:%s]\n",
++		    pps_name(dev_priv, &intel_dp->pps),
++		    dig_port->base.base.base.id, dig_port->base.base.name);
+ 
+ 	/* Preserve the BIOS-computed detected bit. This is
+ 	 * supposed to be read-only.
+@@ -95,7 +129,7 @@ vlv_power_sequencer_kick(struct intel_dp *intel_dp)
+ 
+ 		if (vlv_force_pll_on(dev_priv, pipe, vlv_get_dpll(dev_priv))) {
+ 			drm_err(&dev_priv->drm,
+-				"Failed to force on pll for pipe %c!\n",
++				"Failed to force on PLL for pipe %c!\n",
+ 				pipe_name(pipe));
+ 			return;
+ 		}
+@@ -190,10 +224,9 @@ vlv_power_sequencer_pipe(struct intel_dp *intel_dp)
+ 	intel_dp->pps.pps_pipe = pipe;
+ 
+ 	drm_dbg_kms(&dev_priv->drm,
+-		    "picked pipe %c power sequencer for [ENCODER:%d:%s]\n",
+-		    pipe_name(intel_dp->pps.pps_pipe),
+-		    dig_port->base.base.base.id,
+-		    dig_port->base.base.name);
++		    "picked %s for [ENCODER:%d:%s]\n",
++		    pps_name(dev_priv, &intel_dp->pps),
++		    dig_port->base.base.base.id, dig_port->base.base.name);
+ 
+ 	/* init power sequencer on this pipe and port */
+ 	pps_init_delays(intel_dp);
+@@ -297,17 +330,15 @@ vlv_initial_power_sequencer_setup(struct intel_dp *intel_dp)
+ 	/* didn't find one? just let vlv_power_sequencer_pipe() pick one when needed */
+ 	if (intel_dp->pps.pps_pipe == INVALID_PIPE) {
+ 		drm_dbg_kms(&dev_priv->drm,
+-			    "no initial power sequencer for [ENCODER:%d:%s]\n",
+-			    dig_port->base.base.base.id,
+-			    dig_port->base.base.name);
++			    "[ENCODER:%d:%s] no initial power sequencer\n",
++			    dig_port->base.base.base.id, dig_port->base.base.name);
+ 		return;
+ 	}
+ 
+ 	drm_dbg_kms(&dev_priv->drm,
+-		    "initial power sequencer for [ENCODER:%d:%s]: pipe %c\n",
+-		    dig_port->base.base.base.id,
+-		    dig_port->base.base.name,
+-		    pipe_name(intel_dp->pps.pps_pipe));
++		    "[ENCODER:%d:%s] initial power sequencer: %s\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(dev_priv, &intel_dp->pps));
+ }
+ 
+ static int intel_num_pps(struct drm_i915_private *i915)
+@@ -386,14 +417,14 @@ pps_initial_setup(struct intel_dp *intel_dp)
+ 		intel_dp->pps.pps_idx = bxt_initial_pps_idx(i915, pps_any);
+ 
+ 		drm_dbg_kms(&i915->drm,
+-			    "[ENCODER:%d:%s] no initial power sequencer, assuming %d\n",
++			    "[ENCODER:%d:%s] no initial power sequencer, assuming %s\n",
+ 			    encoder->base.base.id, encoder->base.name,
+-			    intel_dp->pps.pps_idx);
++			    pps_name(i915, &intel_dp->pps));
+ 	} else {
+ 		drm_dbg_kms(&i915->drm,
+-			    "[ENCODER:%d:%s] initial power sequencer: %d\n",
++			    "[ENCODER:%d:%s] initial power sequencer: %s\n",
+ 			    encoder->base.base.id, encoder->base.name,
+-			    intel_dp->pps.pps_idx);
++			    pps_name(i915, &intel_dp->pps));
+ 	}
+ 
+ 	return intel_pps_is_valid(intel_dp);
+@@ -520,15 +551,20 @@ static bool edp_have_panel_vdd(struct intel_dp *intel_dp)
+ void intel_pps_check_power_unlocked(struct intel_dp *intel_dp)
+ {
+ 	struct drm_i915_private *dev_priv = dp_to_i915(intel_dp);
++	struct intel_digital_port *dig_port = dp_to_dig_port(intel_dp);
+ 
+ 	if (!intel_dp_is_edp(intel_dp))
+ 		return;
+ 
+ 	if (!edp_have_panel_power(intel_dp) && !edp_have_panel_vdd(intel_dp)) {
+ 		drm_WARN(&dev_priv->drm, 1,
+-			 "eDP powered off while attempting aux channel communication.\n");
++			 "[ENCODER:%d:%s] %s powered off while attempting AUX CH communication.\n",
++			 dig_port->base.base.base.id, dig_port->base.base.name,
++			 pps_name(dev_priv, &intel_dp->pps));
+ 		drm_dbg_kms(&dev_priv->drm,
+-			    "PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
++			    "[ENCODER:%d:%s] %s PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
++			    dig_port->base.base.base.id, dig_port->base.base.name,
++			    pps_name(dev_priv, &intel_dp->pps),
+ 			    intel_de_read(dev_priv, _pp_stat_reg(intel_dp)),
+ 			    intel_de_read(dev_priv, _pp_ctrl_reg(intel_dp)));
+ 	}
+@@ -546,10 +582,10 @@ void intel_pps_check_power_unlocked(struct intel_dp *intel_dp)
+ static void intel_pps_verify_state(struct intel_dp *intel_dp);
+ 
+ static void wait_panel_status(struct intel_dp *intel_dp,
+-				       u32 mask,
+-				       u32 value)
++			      u32 mask, u32 value)
+ {
+ 	struct drm_i915_private *dev_priv = dp_to_i915(intel_dp);
++	struct intel_digital_port *dig_port = dp_to_dig_port(intel_dp);
+ 	i915_reg_t pp_stat_reg, pp_ctrl_reg;
+ 
+ 	lockdep_assert_held(&dev_priv->display.pps.mutex);
+@@ -560,7 +596,9 @@ static void wait_panel_status(struct intel_dp *intel_dp,
+ 	pp_ctrl_reg = _pp_ctrl_reg(intel_dp);
+ 
+ 	drm_dbg_kms(&dev_priv->drm,
+-		    "mask: 0x%08x value: 0x%08x PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
++		    "[ENCODER:%d:%s] %s mask: 0x%08x value: 0x%08x PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(dev_priv, &intel_dp->pps),
+ 		    mask, value,
+ 		    intel_de_read(dev_priv, pp_stat_reg),
+ 		    intel_de_read(dev_priv, pp_ctrl_reg));
+@@ -568,7 +606,9 @@ static void wait_panel_status(struct intel_dp *intel_dp,
+ 	if (intel_de_wait_for_register(dev_priv, pp_stat_reg,
+ 				       mask, value, 5000))
+ 		drm_err(&dev_priv->drm,
+-			"Panel status timeout: PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
++			"[ENCODER:%d:%s] %s panel status timeout: PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
++			dig_port->base.base.base.id, dig_port->base.base.name,
++			pps_name(dev_priv, &intel_dp->pps),
+ 			intel_de_read(dev_priv, pp_stat_reg),
+ 			intel_de_read(dev_priv, pp_ctrl_reg));
+ 
+@@ -578,26 +618,35 @@ static void wait_panel_status(struct intel_dp *intel_dp,
+ static void wait_panel_on(struct intel_dp *intel_dp)
+ {
+ 	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
++	struct intel_digital_port *dig_port = dp_to_dig_port(intel_dp);
+ 
+-	drm_dbg_kms(&i915->drm, "Wait for panel power on\n");
++	drm_dbg_kms(&i915->drm, "[ENCODER:%d:%s] %s wait for panel power on\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(i915, &intel_dp->pps));
+ 	wait_panel_status(intel_dp, IDLE_ON_MASK, IDLE_ON_VALUE);
+ }
+ 
+ static void wait_panel_off(struct intel_dp *intel_dp)
+ {
+ 	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
++	struct intel_digital_port *dig_port = dp_to_dig_port(intel_dp);
+ 
+-	drm_dbg_kms(&i915->drm, "Wait for panel power off time\n");
++	drm_dbg_kms(&i915->drm, "[ENCODER:%d:%s] %s wait for panel power off time\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(i915, &intel_dp->pps));
+ 	wait_panel_status(intel_dp, IDLE_OFF_MASK, IDLE_OFF_VALUE);
+ }
+ 
+ static void wait_panel_power_cycle(struct intel_dp *intel_dp)
+ {
+ 	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
++	struct intel_digital_port *dig_port = dp_to_dig_port(intel_dp);
+ 	ktime_t panel_power_on_time;
+ 	s64 panel_power_off_duration;
+ 
+-	drm_dbg_kms(&i915->drm, "Wait for panel power cycle\n");
++	drm_dbg_kms(&i915->drm, "[ENCODER:%d:%s] %s wait for panel power cycle\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(i915, &intel_dp->pps));
+ 
+ 	/* take the difference of current time and panel power off time
+ 	 * and then make panel wait for t11_t12 if needed. */
+@@ -684,9 +733,12 @@ bool intel_pps_vdd_on_unlocked(struct intel_dp *intel_dp)
+ 	intel_dp->pps.vdd_wakeref = intel_display_power_get(dev_priv,
+ 							    intel_aux_power_domain(dig_port));
+ 
+-	drm_dbg_kms(&dev_priv->drm, "Turning [ENCODER:%d:%s] VDD on\n",
+-		    dig_port->base.base.base.id,
+-		    dig_port->base.base.name);
++	pp_stat_reg = _pp_stat_reg(intel_dp);
++	pp_ctrl_reg = _pp_ctrl_reg(intel_dp);
++
++	drm_dbg_kms(&dev_priv->drm, "[ENCODER:%d:%s] %s turning VDD on\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(dev_priv, &intel_dp->pps));
+ 
+ 	if (!edp_have_panel_power(intel_dp))
+ 		wait_panel_power_cycle(intel_dp);
+@@ -694,12 +746,11 @@ bool intel_pps_vdd_on_unlocked(struct intel_dp *intel_dp)
+ 	pp = ilk_get_pp_control(intel_dp);
+ 	pp |= EDP_FORCE_VDD;
+ 
+-	pp_stat_reg = _pp_stat_reg(intel_dp);
+-	pp_ctrl_reg = _pp_ctrl_reg(intel_dp);
+-
+ 	intel_de_write(dev_priv, pp_ctrl_reg, pp);
+ 	intel_de_posting_read(dev_priv, pp_ctrl_reg);
+-	drm_dbg_kms(&dev_priv->drm, "PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
++	drm_dbg_kms(&dev_priv->drm, "[ENCODER:%d:%s] %s PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(dev_priv, &intel_dp->pps),
+ 		    intel_de_read(dev_priv, pp_stat_reg),
+ 		    intel_de_read(dev_priv, pp_ctrl_reg));
+ 	/*
+@@ -707,9 +758,9 @@ bool intel_pps_vdd_on_unlocked(struct intel_dp *intel_dp)
+ 	 */
+ 	if (!edp_have_panel_power(intel_dp)) {
+ 		drm_dbg_kms(&dev_priv->drm,
+-			    "[ENCODER:%d:%s] panel power wasn't enabled\n",
+-			    dig_port->base.base.base.id,
+-			    dig_port->base.base.name);
++			    "[ENCODER:%d:%s] %s panel power wasn't enabled\n",
++			    dig_port->base.base.base.id, dig_port->base.base.name,
++			    pps_name(dev_priv, &intel_dp->pps));
+ 		msleep(intel_dp->pps.panel_power_up_delay);
+ 	}
+ 
+@@ -724,6 +775,7 @@ bool intel_pps_vdd_on_unlocked(struct intel_dp *intel_dp)
+  */
+ void intel_pps_vdd_on(struct intel_dp *intel_dp)
+ {
++	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
+ 	intel_wakeref_t wakeref;
+ 	bool vdd;
+ 
+@@ -733,9 +785,10 @@ void intel_pps_vdd_on(struct intel_dp *intel_dp)
+ 	vdd = false;
+ 	with_intel_pps_lock(intel_dp, wakeref)
+ 		vdd = intel_pps_vdd_on_unlocked(intel_dp);
+-	I915_STATE_WARN(!vdd, "[ENCODER:%d:%s] VDD already requested on\n",
++	I915_STATE_WARN(!vdd, "[ENCODER:%d:%s] %s VDD already requested on\n",
+ 			dp_to_dig_port(intel_dp)->base.base.base.id,
+-			dp_to_dig_port(intel_dp)->base.base.name);
++			dp_to_dig_port(intel_dp)->base.base.name,
++			pps_name(i915, &intel_dp->pps));
+ }
+ 
+ static void intel_pps_vdd_off_sync_unlocked(struct intel_dp *intel_dp)
+@@ -753,9 +806,9 @@ static void intel_pps_vdd_off_sync_unlocked(struct intel_dp *intel_dp)
+ 	if (!edp_have_panel_vdd(intel_dp))
+ 		return;
+ 
+-	drm_dbg_kms(&dev_priv->drm, "Turning [ENCODER:%d:%s] VDD off\n",
+-		    dig_port->base.base.base.id,
+-		    dig_port->base.base.name);
++	drm_dbg_kms(&dev_priv->drm, "[ENCODER:%d:%s] %s turning VDD off\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(dev_priv, &intel_dp->pps));
+ 
+ 	pp = ilk_get_pp_control(intel_dp);
+ 	pp &= ~EDP_FORCE_VDD;
+@@ -767,7 +820,9 @@ static void intel_pps_vdd_off_sync_unlocked(struct intel_dp *intel_dp)
+ 	intel_de_posting_read(dev_priv, pp_ctrl_reg);
+ 
+ 	/* Make sure sequencer is idle before allowing subsequent activity */
+-	drm_dbg_kms(&dev_priv->drm, "PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
++	drm_dbg_kms(&dev_priv->drm, "[ENCODER:%d:%s] %s PP_STATUS: 0x%08x PP_CONTROL: 0x%08x\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(dev_priv, &intel_dp->pps),
+ 		    intel_de_read(dev_priv, pp_stat_reg),
+ 		    intel_de_read(dev_priv, pp_ctrl_reg));
+ 
+@@ -842,9 +897,10 @@ void intel_pps_vdd_off_unlocked(struct intel_dp *intel_dp, bool sync)
+ 	if (!intel_dp_is_edp(intel_dp))
+ 		return;
+ 
+-	I915_STATE_WARN(!intel_dp->pps.want_panel_vdd, "[ENCODER:%d:%s] VDD not forced on",
++	I915_STATE_WARN(!intel_dp->pps.want_panel_vdd, "[ENCODER:%d:%s] %s VDD not forced on",
+ 			dp_to_dig_port(intel_dp)->base.base.base.id,
+-			dp_to_dig_port(intel_dp)->base.base.name);
++			dp_to_dig_port(intel_dp)->base.base.name,
++			pps_name(dev_priv, &intel_dp->pps));
+ 
+ 	intel_dp->pps.want_panel_vdd = false;
+ 
+@@ -865,14 +921,16 @@ void intel_pps_on_unlocked(struct intel_dp *intel_dp)
+ 	if (!intel_dp_is_edp(intel_dp))
+ 		return;
+ 
+-	drm_dbg_kms(&dev_priv->drm, "Turn [ENCODER:%d:%s] panel power on\n",
++	drm_dbg_kms(&dev_priv->drm, "[ENCODER:%d:%s] %s turn panel power on\n",
+ 		    dp_to_dig_port(intel_dp)->base.base.base.id,
+-		    dp_to_dig_port(intel_dp)->base.base.name);
++		    dp_to_dig_port(intel_dp)->base.base.name,
++		    pps_name(dev_priv, &intel_dp->pps));
+ 
+ 	if (drm_WARN(&dev_priv->drm, edp_have_panel_power(intel_dp),
+-		     "[ENCODER:%d:%s] panel power already on\n",
++		     "[ENCODER:%d:%s] %s panel power already on\n",
+ 		     dp_to_dig_port(intel_dp)->base.base.base.id,
+-		     dp_to_dig_port(intel_dp)->base.base.name))
++		     dp_to_dig_port(intel_dp)->base.base.name,
++		     pps_name(dev_priv, &intel_dp->pps)))
+ 		return;
+ 
+ 	wait_panel_power_cycle(intel_dp);
+@@ -926,12 +984,14 @@ void intel_pps_off_unlocked(struct intel_dp *intel_dp)
+ 	if (!intel_dp_is_edp(intel_dp))
+ 		return;
+ 
+-	drm_dbg_kms(&dev_priv->drm, "Turn [ENCODER:%d:%s] panel power off\n",
+-		    dig_port->base.base.base.id, dig_port->base.base.name);
++	drm_dbg_kms(&dev_priv->drm, "[ENCODER:%d:%s] %s turn panel power off\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(dev_priv, &intel_dp->pps));
+ 
+ 	drm_WARN(&dev_priv->drm, !intel_dp->pps.want_panel_vdd,
+-		 "Need [ENCODER:%d:%s] VDD to turn off panel\n",
+-		 dig_port->base.base.base.id, dig_port->base.base.name);
++		 "[ENCODER:%d:%s] %s need VDD to turn off panel\n",
++		 dig_port->base.base.base.id, dig_port->base.base.name,
++		 pps_name(dev_priv, &intel_dp->pps));
+ 
+ 	pp = ilk_get_pp_control(intel_dp);
+ 	/* We need to switch off panel power _and_ force vdd, for otherwise some
+@@ -1066,9 +1126,9 @@ static void vlv_detach_power_sequencer(struct intel_dp *intel_dp)
+ 	 * from a port.
+ 	 */
+ 	drm_dbg_kms(&dev_priv->drm,
+-		    "detaching pipe %c power sequencer from [ENCODER:%d:%s]\n",
+-		    pipe_name(pipe), dig_port->base.base.base.id,
+-		    dig_port->base.base.name);
++		    "detaching %s from [ENCODER:%d:%s]\n",
++		    pps_name(dev_priv, &intel_dp->pps),
++		    dig_port->base.base.base.id, dig_port->base.base.name);
+ 	intel_de_write(dev_priv, pp_on_reg, 0);
+ 	intel_de_posting_read(dev_priv, pp_on_reg);
+ 
+@@ -1086,7 +1146,7 @@ static void vlv_steal_power_sequencer(struct drm_i915_private *dev_priv,
+ 		struct intel_dp *intel_dp = enc_to_intel_dp(encoder);
+ 
+ 		drm_WARN(&dev_priv->drm, intel_dp->pps.active_pipe == pipe,
+-			 "stealing pipe %c power sequencer from active [ENCODER:%d:%s]\n",
++			 "stealing PPS %c from active [ENCODER:%d:%s]\n",
+ 			 pipe_name(pipe), encoder->base.base.id,
+ 			 encoder->base.name);
+ 
+@@ -1094,7 +1154,7 @@ static void vlv_steal_power_sequencer(struct drm_i915_private *dev_priv,
+ 			continue;
+ 
+ 		drm_dbg_kms(&dev_priv->drm,
+-			    "stealing pipe %c power sequencer from [ENCODER:%d:%s]\n",
++			    "stealing PPS %c from [ENCODER:%d:%s]\n",
+ 			    pipe_name(pipe), encoder->base.base.id,
+ 			    encoder->base.name);
+ 
+@@ -1139,9 +1199,9 @@ void vlv_pps_init(struct intel_encoder *encoder,
+ 	intel_dp->pps.pps_pipe = crtc->pipe;
+ 
+ 	drm_dbg_kms(&dev_priv->drm,
+-		    "initializing pipe %c power sequencer for [ENCODER:%d:%s]\n",
+-		    pipe_name(intel_dp->pps.pps_pipe), encoder->base.base.id,
+-		    encoder->base.name);
++		    "initializing %s for [ENCODER:%d:%s]\n",
++		    pps_name(dev_priv, &intel_dp->pps),
++		    encoder->base.base.id, encoder->base.name);
+ 
+ 	/* init power sequencer on this pipe and port */
+ 	pps_init_delays(intel_dp);
+@@ -1165,7 +1225,9 @@ static void pps_vdd_init(struct intel_dp *intel_dp)
+ 	 * indefinitely.
+ 	 */
+ 	drm_dbg_kms(&dev_priv->drm,
+-		    "VDD left on by BIOS, adjusting state tracking\n");
++		    "[ENCODER:%d:%s] %s VDD left on by BIOS, adjusting state tracking\n",
++		    dig_port->base.base.base.id, dig_port->base.base.name,
++		    pps_name(dev_priv, &intel_dp->pps));
+ 	drm_WARN_ON(&dev_priv->drm, intel_dp->pps.vdd_wakeref);
+ 	intel_dp->pps.vdd_wakeref = intel_display_power_get(dev_priv,
+ 							    intel_aux_power_domain(dig_port));
