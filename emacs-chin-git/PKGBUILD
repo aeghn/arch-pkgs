@@ -100,9 +100,9 @@ NOGZ="YES"        # Don't compress .el files.
 
 ################################################################################
 if [[ $CLI == "YES" ]] ; then
-  pkgname="emacs-nox-git"
+  pkgname="emacs-nox-chin-git"
 else
-pkgname="emacs-pgtk-git"
+pkgname="emacs-pgtk-chin-git"
 fi
 pkgver=30.0.50.99999
 pkgrel=1
