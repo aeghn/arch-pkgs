@@ -8,7 +8,7 @@
 
 _pkgsuffix=15iah7
 pkgbase="linux-xanmod-$_pkgsuffix"
-pkgver=999
+pkgver=6.7.0.xanmod1.r0.ged4419a978
 pkgrel=1
 
 pkgdesc="Linux Build"
@@ -20,11 +20,11 @@ makedepends=(
 )
 options=('!strip')
 _srcname="linux-xanmod-$_pkgsuffix"
+_local_repo="$HOME/Projects/linux-xanmod"
 source=(
-    "$_srcname::git+file:///home/chin/Projects/linux-xanmod"
+    # "$_srcname::git+file:///home/chin/Projects/linux-xanmod"
     # Adapted from https://github.com/zhmars/cjktty-patches
     0001-cjktty.patch
-    drm-i915-Fake-dual-eDP-VBT-fixes.mbox
     chinconfig
 )
 validpgpkeys=(
@@ -33,9 +33,8 @@ validpgpkeys=(
     'A2FF3A36AAA56654109064AB19802F8B0D70FC30'  # Jan Alexander Steffens (heftig)
 )
 sha256sums=(
+    # 'SKIP'
     'SKIP'
-    'SKIP'
-    'ec78c7f2084a081e4b039a23fb698bf1244c0b995f071a08eb4f9fc6fbfdfe96'
     'SKIP'
 )
 
@@ -50,11 +49,20 @@ pkgver() {
 }
 
 prepare() {
-    msg2 "Enter directory: $(realpath ${_srcname})"
+    msg "Dirty: Copy Repo"
+    msg2 "rm -rf $_srcname"
+    rm -rf "$_srcname"
+    msg2 "Clone $_local_repo $_srcname"
+    cp -r "$_local_repo" "${_srcname}"
+    msg2 "cd $(realpath $_srcname)"
     cd "${_srcname}"
 
+    msg2 "Remove untracked but no ignored files."
+    git clean -fd
+
     msg2 "Setting version..."
-    scripts/setlocalversion --save-scmversion
+    # scripts/setlocalversion --save-scmversion
+    # scripts/setlocalversion
     # echo "$pkgrel" > localversion.10-pkgrel
     echo "${pkgbase#linux-xanmod}" > localversion.20-pkgname
 
@@ -81,21 +89,22 @@ prepare() {
     local _config="config_${arth_level}"
 
     msg2 "Applying configuration"
-    cp -vf CONFIGS/xanmod/gcc/${_config} .config
+    cp -vf "$SRCDEST/config.last" .config
 
-    bash ../chinconfig || exit 1
     make olddefconfig
-    # exit 1
+    make LSMOD=$HOME/.config/modprobed.db localmodconfig
 
     export LOCALVERSION=
     make -s kernelrelease > version
     msg2 "Prepared %s version %s" "$pkgbase" "$(<version)"
 
     # save configuration for later reuse
+    msg2 "Save .config to $SRCDEST/config.last"
     cat .config > "${SRCDEST}/config.last"
 }
 
 build() {
+    echo "$PWD ${_srcname}"
     cd "${_srcname}"
     export PATH="/usr/lib/ccache/bin/:$PATH"
     make -j20 all
@@ -127,7 +136,7 @@ _package() {
     make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 modules_install
 
     # remove build and source links
-    rm "$modulesdir"/{source,build}
+    rm -rf "$modulesdir"/{source,build}
 }
 
 _package-headers() {
