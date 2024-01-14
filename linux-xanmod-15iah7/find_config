@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+[ $# -ne 2 ] && echo USAGE: $0 KEYWORD DIR && exit 1
+
+cd "$2"
+
+find -name 'Makefile' -exec sh -c "awk 'BEGIN{MT=\"\"; MF=0; FF=0} {if (\$0 ~ /CONFIG_/){if(MF==2){print \"=====\n\"MT\"\n=====\"; FF=1}; MF=1; MT=\"\"}; if(MF>=1){MT=MT\$0}; if(tolower(\$0) ~ /$1/) {MF=2}} END{if (FF!=1) {exit 1}}' {} && echo -e \"{}\n\"" \;
+
