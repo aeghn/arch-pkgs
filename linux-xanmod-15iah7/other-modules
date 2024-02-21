@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+CHIN_OTHER_MODULES=(nf_nat_redirect nvme_common vfio_virqfd drm_dp_helper CONFIG_IP_NF_TARGET_REDIRECT CONFIG_NETFILTER_XT_TARGET_REDIRECT 
+	# 2024-02-21 podman requires overlay fs
+	CONFIG_OVERLAY_FS)
