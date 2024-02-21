@@ -8,7 +8,7 @@
 
 _pkgsuffix=15iah7
 pkgbase="linux-xanmod-$_pkgsuffix"
-pkgver=6.7.0.xanmod1.r0.ged4419a978
+pkgver=6.7.5.xanmod1.r0.gf29bf01211
 pkgrel=1
 
 pkgdesc="Linux Build"
@@ -25,7 +25,9 @@ source=(
     # "$_srcname::git+file:///home/chin/Projects/linux-xanmod"
     # Adapted from https://github.com/zhmars/cjktty-patches
     0001-cjktty.patch
+    0002-dirty-disable-intel-lar.patch
     chinconfig
+    other-modules
 )
 validpgpkeys=(
     'ABAF11C65A2970B130ABE3C479BE3E4300411886'  # Linus Torvalds
@@ -33,7 +35,8 @@ validpgpkeys=(
     'A2FF3A36AAA56654109064AB19802F8B0D70FC30'  # Jan Alexander Steffens (heftig)
 )
 sha256sums=(
-    # 'SKIP'
+    'SKIP'
+    'SKIP'
     'SKIP'
     'SKIP'
 )
@@ -49,12 +52,10 @@ pkgver() {
 }
 
 prepare() {
-    msg "Dirty: Copy Repo"
-    msg2 "rm -rf $_srcname"
+    msg "Dirty, copy $_local_repo to $_srcname"
     rm -rf "$_srcname"
-    msg2 "Clone $_local_repo $_srcname"
     cp -r "$_local_repo" "${_srcname}"
-    msg2 "cd $(realpath $_srcname)"
+    msg2 "Change directory $(realpath $_srcname)"
     cd "${_srcname}"
 
     msg2 "Remove untracked but no ignored files."
@@ -93,13 +94,14 @@ prepare() {
 
     make olddefconfig
     make LSMOD=$HOME/.config/modprobed.db localmodconfig
-    for opt in nf_nat_redirect nvme_common vfio_virqfd drm_dp_helper CONFIG_IP_NF_TARGET_REDIRECT CONFIG_NETFILTER_XT_TARGET_REDIRECT ; do
+    source "$SRCDEST/other-modules"
+    for opt in "${CHIN_OTHER_MODULES[@]}";  do
+      msg2 "Enabling $opt"
       scripts/config -e $opt
     done 
 
 
     # scripts/config --enable nf_nat_redirect
-    read
 
     export LOCALVERSION=
     make -s kernelrelease > version
