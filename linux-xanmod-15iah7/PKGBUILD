@@ -8,7 +8,7 @@
 
 _pkgsuffix=15iah7
 pkgbase="linux-xanmod-$_pkgsuffix"
-pkgver=6.7.5.xanmod1.r0.gf29bf01211
+pkgver=6.7.6.xanmod1.r0.gf3b2e6457a
 pkgrel=1
 
 pkgdesc="Linux Build"
