@@ -104,7 +104,7 @@ if [[ $CLI == "YES" ]] ; then
 else
 pkgname="emacs-pgtk-chin-git"
 fi
-pkgver=30.0.50.99999
+pkgver=30.0.50.14950
 pkgrel=1
 pkgdesc="GNU Emacs. Development master branch."
 arch=('x86_64')
@@ -116,10 +116,10 @@ makedepends=('git' 'mold')
 provides=('emacs')
 conflicts=('emacs')
 replaces=('emacs')
-source=("emacs-git::git+file:///home/chin/Projects/emacs")
+#source=("emacs-git::git+file:///home/chin/Projects/emacs")
 options=(!strip)
 install=emacs-git.install
-b2sums=('SKIP')
+#b2sums=('SKIP')
 ################################################################################
 
 ################################################################################
@@ -245,6 +245,7 @@ pkgver() {
 # There is no need to run autogen.sh after first checkout.
 # Doing so, breaks incremental compilation.
 prepare() {
+  cp -r "$HOME/Projects/emacs" "$srcdir/emacs-git"
   cd "$srcdir/emacs-git"
   [[ -x configure ]] || ( ./autogen.sh git && ./autogen.sh autoconf )
 }
