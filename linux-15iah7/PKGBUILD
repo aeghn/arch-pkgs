@@ -7,8 +7,8 @@
 # Maintainer: Thomas Baechler <thomas@archlinux.org>
 
 _pkgsuffix=15iah7
-pkgbase="linux-xanmod-$_pkgsuffix"
-pkgver=6.8.8.xanmod1.r0.g5a3fcc1ad
+pkgbase="linux-$_pkgsuffix"
+pkgver=6.9.4.r0.g103a4e4a4
 pkgrel=1
 
 pkgdesc="Linux Build"
@@ -19,13 +19,12 @@ makedepends=(
     bc cpio kmod libelf perl tar xz git ccache
 )
 options=('!strip')
-_srcname="linux-xanmod-$_pkgsuffix"
-_local_repo="$HOME/Projects/linux-xanmod"
+_srcname="linux-$_pkgsuffix"
+_local_repo="$HOME/Projects/linux"
 source=(
-    # "$_srcname::git+file:///home/chin/Projects/linux-xanmod"
+    # "$_srcname::git+file:///home/chin/Projects/linux"
     # Adapted from https://github.com/zhmars/cjktty-patches
-    0001-cjktty.patch
-    0002-dirty-disable-intel-lar.patch
+    # 0002-dirty-disable-intel-lar.patch
     chinconfig
     other-modules
 )
@@ -35,8 +34,6 @@ validpgpkeys=(
     'A2FF3A36AAA56654109064AB19802F8B0D70FC30'  # Jan Alexander Steffens (heftig)
 )
 sha256sums=(
-    'SKIP'
-    'SKIP'
     'SKIP'
     'SKIP'
 )
@@ -65,7 +62,7 @@ prepare() {
     # scripts/setlocalversion --save-scmversion
     # scripts/setlocalversion
     # echo "$pkgrel" > localversion.10-pkgrel
-    echo "${pkgbase#linux-xanmod}" > localversion.20-pkgname
+    echo "${pkgbase#linux}" > localversion.20-pkgname
 
     local src
     for src in "${source[@]}"; do
