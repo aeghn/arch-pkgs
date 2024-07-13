@@ -8,7 +8,7 @@
 
 _pkgsuffix=15iah7
 pkgbase="linux-$_pkgsuffix"
-pkgver=6.9.7.r0.g12c740d50
+pkgver=6.9.8.r0.g2106717b5
 pkgrel=1
 
 pkgdesc="Linux Build"
