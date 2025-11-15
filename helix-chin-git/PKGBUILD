@@ -1,0 +1,86 @@
+# Maintainer: Orhun Parmaksız <orhun@archlinux.org>
+# Contributor: Maxim Baz <archlinux at maximbaz dot com>
+# Contributor: Wojciech Kępka (wojciech@wkepka.dev)
+# Contributor: Théo Daron (theo@daron.be)
+
+pkgname="helix-chin-git"
+pkgver=25.01.1
+pkgrel=1
+pkgdesc="A post-modern modal text editor"
+arch=('x86_64')
+url="https://helix-editor.com"
+license=('MPL-2.0')
+depends=('gcc-libs' 'glibc' 'hicolor-icon-theme')
+makedepends=('cargo' 'git')
+optdepends=(
+  'ansible-language-server: for Ansible language support'
+  'bash-language-server: for Bash language support'
+  'clang: for C/C++ language support'
+  'dart: for Dart language support'
+  'elvish: for elvish language support'
+  'gopls: for Go language support'
+  'haskell-language-server: for Haskell language support'
+  'julia: for Julia language support'
+  'lua-language-server: for Lua language support'
+  'marksman: for Marksman language support'
+  'python-lsp-server: for Python language support'
+  'r: for R and rmarkdown language support'
+  'racket: for racket language support'
+  'rust-analyzer: for Rust language support'
+  'taplo: for TOML language support'
+  'texlab: for LaTeX language support'
+  'typescript-language-server: for jsx, tsx, typescript language support'
+  'typst-lsp: for Typst language support'
+  'vue-language-server: for Vue language support'
+  'vscode-css-languageserver: for CSS and SCSS support'
+  'vscode-html-languageserver: for HTML language support'
+  'vscode-json-languageserver: for JSON language support'
+  'yaml-language-server: for YAML language support'
+  'zls: for Zig language support'
+)
+source=()
+b2sums=()
+options=('!lto')
+
+_HELIX_NAME=helix
+_SRC_DIR="/home/chin/Projects/helix"
+
+prepare() {
+  cd "$_SRC_DIR"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_SRC_DIR"
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$_SRC_DIR"
+  cargo test --frozen
+}
+
+package() {
+  cd "$_SRC_DIR"
+  install -Dm 755 "target/release/hx" "$pkgdir/usr/lib/$_HELIX_NAME/hx"
+  install -vdm 755 "$pkgdir/usr/bin"
+  ln -sv /usr/lib/$_HELIX_NAME/hx "$pkgdir/usr/bin/hx"
+  install -Dm 644 README.md -t "$pkgdir/usr/share/doc/$_HELIX_NAME"
+
+  local runtime_dir="$pkgdir/usr/lib/$_HELIX_NAME/runtime"
+  mkdir -p "$runtime_dir/grammars"
+  cp -r "runtime/queries" "$runtime_dir"
+  cp -r "runtime/themes" "$runtime_dir"
+  find "runtime/grammars" -type f -name '*.so' -exec \
+    install -Dm 755 {} -t "$runtime_dir/grammars" \;
+  install -Dm 644 runtime/tutor -t "$runtime_dir"
+
+  install -Dm 644 "contrib/completion/hx.bash" "$pkgdir/usr/share/bash-completion/completions/$_HELIX_NAME"
+  install -Dm 644 "contrib/completion/hx.fish" "$pkgdir/usr/share/fish/vendor_completions.d/$_HELIX_NAME.fish"
+  install -Dm 644 "contrib/completion/hx.zsh" "$pkgdir/usr/share/zsh/site-functions/_$_HELIX_NAME"
+  install -Dm 644 "contrib/Helix.desktop" "$pkgdir/usr/share/applications/$_HELIX_NAME.desktop"
+  install -Dm 644 "contrib/$_HELIX_NAME.png" -t "$pkgdir/usr/share/icons/hicolor/256x256/apps"
+}
+
+# vim: ts=2 sw=2 et:
+
