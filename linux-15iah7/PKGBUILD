@@ -1,76 +1,84 @@
-#
-# Maintainer: Mikael Eriksson <mikael_eriksson@miffe.org>
-#
-# Based on the linux package by:
-# Maintainer: Jan Alexander Steffens (heftig) <jan.steffens@gmail.com>
-# Maintainer: Tobias Powalowski <tpowa@archlinux.org>
-# Maintainer: Thomas Baechler <thomas@archlinux.org>
+# Maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
 
-_pkgsuffix=15iah7
-pkgbase="linux-$_pkgsuffix"
-pkgver=6.10.r0.g0c3836482
+pkgbase=linux
+pkgver=6.17.8.15iah7-1
 pkgrel=1
-
-pkgdesc="Linux Build"
+pkgdesc='Linux'
+url='https://github.com/archlinux/linux'
 arch=(x86_64)
-url="https://github.com/xanmod/linux/commits/$_srctag"
-license=(GPL2)
+license=(GPL-2.0-only)
 makedepends=(
-    bc cpio kmod libelf perl tar xz git ccache
+    bc
+    cpio
+    gettext
+    libelf
+    pahole
+    perl
+    python
+    rust
+    rust-bindgen
+    rust-src
+    tar
+    xz
+
+    # htmldocs
+    graphviz
+    imagemagick
+    python-sphinx
+    python-yaml
+    texlive-latexextra
+
+    modprobed-db
 )
-options=('!strip')
-_srcname="linux-$_pkgsuffix"
-_local_repo="$HOME/Projects/linux"
+options=(
+    !debug
+    !strip
+)
+_srcname=linux-${pkgver%.*}
+_srctag=v${pkgver%.*}-${pkgver##*.}
 source=(
-    # "$_srcname::git+file:///home/chin/Projects/linux"
-    # Adapted from https://github.com/zhmars/cjktty-patches
-    # 0002-dirty-disable-intel-lar.patch
-    chinconfig
-    other-modules
+    # use aliyun to speedup
+    https://mirrors.aliyun.com/linux-kernel/v${pkgver%%.*}.x/${_srcname}.tar.xz
+    https://cdn.kernel.org/pub/linux/kernel/v${pkgver%%.*}.x/${_srcname}.tar.sign
+    $url/releases/download/$_srctag/linux-$_srctag.patch.zst{,.sig}
+    config # the main kernel config file
 )
 validpgpkeys=(
-    'ABAF11C65A2970B130ABE3C479BE3E4300411886'  # Linus Torvalds
-    '647F28654894E3BD457199BE38DBBDC86092693E'  # Greg Kroah-Hartman
-    'A2FF3A36AAA56654109064AB19802F8B0D70FC30'  # Jan Alexander Steffens (heftig)
+    ABAF11C65A2970B130ABE3C479BE3E4300411886 # Linus Torvalds
+    647F28654894E3BD457199BE38DBBDC86092693E # Greg Kroah-Hartman
+    83BC8889351B5DEBBB68416EB8AC08600F108CDF # Jan Alexander Steffens (heftig)
 )
-sha256sums=(
+# https://www.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc
+sha256sums=('5a8de64a75fca706c01c6c0a77cf75a74618439db195e25f1f0268af6b2fb1da'
     'SKIP'
+    '9d04f6d76161ab5f9aa7c4be26c11e14da46c9f8b179ac7038b969872a4565b1'
     'SKIP'
-)
+    '4bf24013d1a837bf6b51dbbfd1a162c59769f8371f2cf919e34b21271697f9c5')
+b2sums=('1476969a9ad9252f97c16edb3c9fb37d75de3c00280af42057a2704666aa4945ac50d458e61d1e2b751e224ec38c99789b80f23636bc93f79f5b5e51a163980b'
+    'SKIP'
+    '20bd7e6186671d21cbba127a44d4c3f6799d4e6ca7bec37a391d3133386f20c122829b0b701d59b08f2f551166e6f93b9c9d0da7d4e58712c973cec5d07eea8b'
+    'SKIP'
+    '1ec4d533d25e9127c61eb09dfcd840c88e34cff2c55bcf6745c926892d275c88a5f810bd8ccf63903b5e33c211d4e814abdb057d5c060096d1a3b65280f2c347')
 
-export KBUILD_BUILD_HOST=${KBUILD_BUILD_HOST:-archlinux}
-export KBUILD_BUILD_USER=${KBUILD_BUILD_USER:-makepkg}
-export KBUILD_BUILD_TIMESTAMP=${KBUILD_BUILD_TIMESTAMP:-$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})}
-
-pkgver() {
-  cd "${_srcname}"
-
-  git describe --tags --long | sed -E 's/^v//;s/([^-]*-g)/r\1/;s/-/./g;s/\.rc/rc/'
-}
+export KBUILD_BUILD_HOST=archlinux
+export KBUILD_BUILD_USER=$pkgbase
+export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
 
 prepare() {
-    msg "Dirty, copy $_local_repo to $_srcname"
-    rm -rf "$_srcname"
-    cp -r "$_local_repo" "${_srcname}"
-    msg2 "Change directory $(realpath $_srcname)"
-    cd "${_srcname}"
+    cd $_srcname
 
-    msg2 "Remove untracked but no ignored files."
-    git clean -fd
-
-    msg2 "Setting version..."
-    # scripts/setlocalversion --save-scmversion
-    # scripts/setlocalversion
-    # echo "$pkgrel" > localversion.10-pkgrel
-    echo "${pkgbase#linux}" > localversion.20-pkgname
+    echo "Setting version..."
+    echo "-$pkgrel" >localversion.10-pkgrel
+    echo "${pkgbase#linux}" >localversion.20-pkgname
 
     local src
     for src in "${source[@]}"; do
         src="${src%%::*}"
         src="${src##*/}"
-        [[ $src = *.patch ]] || [[ $src = *.mbox ]] || continue
-        msg2 "Applying patch $src..."
-        patch -Np1 < "../$src"
+        src="${src%.zst}"
+        [[ $src = *.patch ]] || continue
+        echo "Applying patch $src..."
+        patch -Np1 <"../$src"
     done
 
     msg2 "Get highest supported level"
@@ -87,51 +95,60 @@ prepare() {
     local _config="config_${arth_level}"
 
     msg2 "Applying configuration"
-    cp -vf "$SRCDEST/config.last" .config
+    cp -vf ../config .config
 
     make olddefconfig
+    diff -u ../config .config || :
+
+    modprobed-db store
     make LSMOD=$HOME/.config/modprobed.db localmodconfig
     source "$SRCDEST/other-modules"
-    for opt in "${CHIN_OTHER_MODULES[@]}";  do
-      msg2 "Enabling $opt"
-      scripts/config -e $opt
-    done 
-
-
-    # scripts/config --enable nf_nat_redirect
+    for opt in "${CHIN_OTHER_MODULES[@]}"; do
+        msg2 "Enabling $opt"
+        scripts/config -e $opt
+    done
 
     export LOCALVERSION=
-    make -s kernelrelease > version
+    make -s kernelrelease >version
     msg2 "Prepared %s version %s" "$pkgbase" "$(<version)"
-
-    # save configuration for later reuse
-    msg2 "Save .config to $SRCDEST/config.last"
-    cat .config > "${SRCDEST}/config.last"
 }
 
 build() {
-    echo "$PWD ${_srcname}"
-    cd "${_srcname}"
+    cd $_srcname
     export PATH="/usr/lib/ccache/bin/:$PATH"
 
     time make -j$(nproc) all
+    make -C tools/bpf/bpftool vmlinux.h feature-clang-bpf-co-re=1
+    # make htmldocs SPHINXOPTS=-QT
 }
 
 _package() {
-    pkgdesc="The Linux kernel and modules with Xanmod patches"
-    depends=(coreutils kmod initramfs)
-    optdepends=('crda: to set the correct wireless channels of your country'
-                'linux-firmware: firmware images needed for some devices')
-    provides=(VIRTUALBOX-GUEST-MODULES
-              WIREGUARD-MODULE
-              KSMBD-MODULE
-              NTFS3-MODULE)
+    pkgdesc="The $pkgdesc kernel and modules"
+    depends=(
+        coreutils
+        initramfs
+        kmod
+    )
+    optdepends=(
+        'linux-firmware: firmware images needed for some devices'
+        'scx-scheds: to use sched-ext schedulers'
+        'wireless-regdb: to set the correct wireless channels of your country'
+    )
+    provides=(
+        KSMBD-MODULE
+        NTSYNC-MODULE
+        VIRTUALBOX-GUEST-MODULES
+        WIREGUARD-MODULE
+    )
+    replaces=(
+        virtualbox-guest-modules-arch
+        wireguard-arch
+    )
 
-    cd "${_srcname}"
-    local kernver="$(<version)"
-    local modulesdir="$pkgdir/usr/lib/modules/$kernver"
+    cd $_srcname
+    local modulesdir="$pkgdir/usr/lib/modules/$(<version)"
 
-    msg2 "Installing boot image..."
+    echo "Installing boot image..."
     # systemd expects to find the kernel here to allow hibernation
     # https://github.com/systemd/systemd/commit/edda44605f06a41fb86b7ab8128dcf99161d2344
     install -Dm644 "$(make -s image_name)" "$modulesdir/vmlinuz"
@@ -139,34 +156,36 @@ _package() {
     # Used by mkinitcpio to name the kernel
     echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
 
-    msg2 "Installing modules..."
-    make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 modules_install
+    echo "Installing modules..."
+    ZSTD_CLEVEL=19 make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 \
+        DEPMOD=/doesnt/exist modules_install # Suppress depmod
 
-    # remove build and source links
-    rm -rf "$modulesdir"/{source,build}
+    # remove build link
+    rm "$modulesdir"/build
 }
 
 _package-headers() {
     pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel"
     depends=(pahole)
 
-    cd "${_srcname}"
+    cd $_srcname
     local builddir="$pkgdir/usr/lib/modules/$(<version)/build"
 
-    msg2 "Installing build files..."
+    echo "Installing build files..."
     install -Dt "$builddir" -m644 .config Makefile Module.symvers System.map \
-            localversion.* version vmlinux
+        localversion.* version vmlinux tools/bpf/bpftool/vmlinux.h
     install -Dt "$builddir/kernel" -m644 kernel/Makefile
     install -Dt "$builddir/arch/x86" -m644 arch/x86/Makefile
     cp -t "$builddir" -a scripts
+    ln -srt "$builddir" "$builddir/scripts/gdb/vmlinux-gdb.py"
 
     # required when STACK_VALIDATION is enabled
     install -Dt "$builddir/tools/objtool" tools/objtool/objtool
 
     # required when DEBUG_INFO_BTF_MODULES is enabled
-    if [ -f "$builddir/tools/bpf/resolve_btfids" ]; then install -Dt "$builddir/tools/bpf/resolve_btfids" tools/bpf/resolve_btfids/resolve_btfids ; fi
+    install -Dt "$builddir/tools/bpf/resolve_btfids" tools/bpf/resolve_btfids/resolve_btfids
 
-    msg2 "Installing headers..."
+    echo "Installing headers..."
     cp -t "$builddir" -a include
     cp -t "$builddir/arch/x86" -a arch/x86/include
     install -Dt "$builddir/arch/x86/kernel" -m644 arch/x86/kernel/asm-offsets.s
@@ -188,7 +207,15 @@ _package-headers() {
     echo "Installing KConfig files..."
     find . -name 'Kconfig*' -exec install -Dm644 {} "$builddir/{}" \;
 
-    msg2 "Removing unneeded architectures..."
+    echo "Installing Rust files..."
+    install -Dt "$builddir/rust" -m644 rust/*.rmeta
+    install -Dt "$builddir/rust" rust/*.so
+
+    echo "Installing unstripped VDSO..."
+    make INSTALL_MOD_PATH="$pkgdir/usr" vdso_install \
+        link= # Suppress build-id symlinks
+
+    echo "Removing unneeded architectures..."
     local arch
     for arch in "$builddir"/arch/*/; do
         [[ $arch = */x86/ ]] && continue
@@ -196,44 +223,46 @@ _package-headers() {
         rm -r "$arch"
     done
 
-    msg2 "Removing documentation..."
+    echo "Removing documentation..."
     rm -r "$builddir/Documentation"
 
-    msg2 "Removing broken symlinks..."
+    echo "Removing broken symlinks..."
     find -L "$builddir" -type l -printf 'Removing %P\n' -delete
 
-    msg2 "Removing loose objects..."
+    echo "Removing loose objects..."
     find "$builddir" -type f -name '*.o' -printf 'Removing %P\n' -delete
 
-    msg2 "Stripping build tools..."
+    echo "Stripping build tools..."
     local file
     while read -rd '' file; do
-        case "$(file -bi "$file")" in
-            application/x-sharedlib\;*)      # Libraries (.so)
-                strip -v $STRIP_SHARED "$file" ;;
-            application/x-archive\;*)        # Libraries (.a)
-                strip -v $STRIP_STATIC "$file" ;;
-            application/x-executable\;*)     # Binaries
-                strip -v $STRIP_BINARIES "$file" ;;
-            application/x-pie-executable\;*) # Relocatable binaries
-                strip -v $STRIP_SHARED "$file" ;;
+        case "$(file -Sib "$file")" in
+        application/x-sharedlib\;*) # Libraries (.so)
+            strip -v $STRIP_SHARED "$file" ;;
+        application/x-archive\;*) # Libraries (.a)
+            strip -v $STRIP_STATIC "$file" ;;
+        application/x-executable\;*) # Binaries
+            strip -v $STRIP_BINARIES "$file" ;;
+        application/x-pie-executable\;*) # Relocatable binaries
+            strip -v $STRIP_SHARED "$file" ;;
         esac
     done < <(find "$builddir" -type f -perm -u+x ! -name vmlinux -print0)
 
-    msg2 "Stripping vmlinux..."
+    echo "Stripping vmlinux..."
     strip -v $STRIP_STATIC "$builddir/vmlinux"
 
-    msg2 "Adding symlink..."
+    echo "Adding symlink..."
     mkdir -p "$pkgdir/usr/src"
     ln -sr "$builddir" "$pkgdir/usr/src/$pkgbase"
 }
 
-pkgname=("${pkgbase}" "${pkgbase}-headers")
+pkgname=(
+    "$pkgbase"
+    "$pkgbase-headers"
+)
 for _p in "${pkgname[@]}"; do
     eval "package_$_p() {
     $(declare -f "_package${_p#$pkgbase}")
     _package${_p#$pkgbase}
   }"
 done
-
 # vim:set ts=8 sts=2 sw=2 et:
