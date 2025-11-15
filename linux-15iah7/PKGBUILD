@@ -1,7 +1,9 @@
 # Maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
 
-pkgbase=linux
-pkgver=6.17.8.15iah7-1
+pkgbase=linux-15iah7
+kernelver=6.17.8
+pkgversuf=arch1
+pkgver=${kernelver}.${pkgversuf}
 pkgrel=1
 pkgdesc='Linux'
 url='https://github.com/archlinux/linux'
@@ -34,14 +36,16 @@ options=(
     !debug
     !strip
 )
-_srcname=linux-${pkgver%.*}
-_srctag=v${pkgver%.*}-${pkgver##*.}
+_srcname=linux-${kernelver}
+_srctag=v${kernelver}-${pkgversuf}
 source=(
     # use aliyun to speedup
-    https://mirrors.aliyun.com/linux-kernel/v${pkgver%%.*}.x/${_srcname}.tar.xz
-    https://cdn.kernel.org/pub/linux/kernel/v${pkgver%%.*}.x/${_srcname}.tar.sign
+    https://mirrors.aliyun.com/linux-kernel/v${kernelver%%.*}.x/${_srcname}.tar.xz
+    https://cdn.kernel.org/pub/linux/kernel/v${kernelver%%.*}.x/${_srcname}.tar.sign
     $url/releases/download/$_srctag/linux-$_srctag.patch.zst{,.sig}
     config # the main kernel config file
+    manual-modules
+    0002-dirty-disable-intel-lar.patch
 )
 validpgpkeys=(
     ABAF11C65A2970B130ABE3C479BE3E4300411886 # Linus Torvalds
@@ -50,15 +54,13 @@ validpgpkeys=(
 )
 # https://www.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc
 sha256sums=('5a8de64a75fca706c01c6c0a77cf75a74618439db195e25f1f0268af6b2fb1da'
-    'SKIP'
-    '9d04f6d76161ab5f9aa7c4be26c11e14da46c9f8b179ac7038b969872a4565b1'
-    'SKIP'
-    '4bf24013d1a837bf6b51dbbfd1a162c59769f8371f2cf919e34b21271697f9c5')
-b2sums=('1476969a9ad9252f97c16edb3c9fb37d75de3c00280af42057a2704666aa4945ac50d458e61d1e2b751e224ec38c99789b80f23636bc93f79f5b5e51a163980b'
-    'SKIP'
-    '20bd7e6186671d21cbba127a44d4c3f6799d4e6ca7bec37a391d3133386f20c122829b0b701d59b08f2f551166e6f93b9c9d0da7d4e58712c973cec5d07eea8b'
-    'SKIP'
-    '1ec4d533d25e9127c61eb09dfcd840c88e34cff2c55bcf6745c926892d275c88a5f810bd8ccf63903b5e33c211d4e814abdb057d5c060096d1a3b65280f2c347')
+            'SKIP'
+            '9d04f6d76161ab5f9aa7c4be26c11e14da46c9f8b179ac7038b969872a4565b1'
+            'SKIP'
+            '4bf24013d1a837bf6b51dbbfd1a162c59769f8371f2cf919e34b21271697f9c5'
+            'SKIP'
+            'SKIP'
+           )
 
 export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
@@ -100,15 +102,13 @@ prepare() {
     make olddefconfig
     diff -u ../config .config || :
 
+    msg2 "Apply Modprobed-db config"
     modprobed-db store
     make LSMOD=$HOME/.config/modprobed.db localmodconfig
-    source "$SRCDEST/other-modules"
-    for opt in "${CHIN_OTHER_MODULES[@]}"; do
-        msg2 "Enabling $opt"
-        scripts/config -e $opt
-    done
 
-    export LOCALVERSION=
+    msg2 "Apply manual Modules"
+    sh ../manual-modules 
+
     make -s kernelrelease >version
     msg2 "Prepared %s version %s" "$pkgbase" "$(<version)"
 }
@@ -158,7 +158,7 @@ _package() {
 
     echo "Installing modules..."
     ZSTD_CLEVEL=19 make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 \
-        DEPMOD=/doesnt/exist modules_install # Suppress depmod
+                   DEPMOD=/doesnt/exist modules_install # Suppress depmod
 
     # remove build link
     rm "$modulesdir"/build
@@ -173,7 +173,7 @@ _package-headers() {
 
     echo "Installing build files..."
     install -Dt "$builddir" -m644 .config Makefile Module.symvers System.map \
-        localversion.* version vmlinux tools/bpf/bpftool/vmlinux.h
+            localversion.* version vmlinux tools/bpf/bpftool/vmlinux.h
     install -Dt "$builddir/kernel" -m644 kernel/Makefile
     install -Dt "$builddir/arch/x86" -m644 arch/x86/Makefile
     cp -t "$builddir" -a scripts
@@ -213,7 +213,7 @@ _package-headers() {
 
     echo "Installing unstripped VDSO..."
     make INSTALL_MOD_PATH="$pkgdir/usr" vdso_install \
-        link= # Suppress build-id symlinks
+         link= # Suppress build-id symlinks
 
     echo "Removing unneeded architectures..."
     local arch
@@ -236,14 +236,14 @@ _package-headers() {
     local file
     while read -rd '' file; do
         case "$(file -Sib "$file")" in
-        application/x-sharedlib\;*) # Libraries (.so)
-            strip -v $STRIP_SHARED "$file" ;;
-        application/x-archive\;*) # Libraries (.a)
-            strip -v $STRIP_STATIC "$file" ;;
-        application/x-executable\;*) # Binaries
-            strip -v $STRIP_BINARIES "$file" ;;
-        application/x-pie-executable\;*) # Relocatable binaries
-            strip -v $STRIP_SHARED "$file" ;;
+            application/x-sharedlib\;*) # Libraries (.so)
+                strip -v $STRIP_SHARED "$file" ;;
+            application/x-archive\;*) # Libraries (.a)
+                strip -v $STRIP_STATIC "$file" ;;
+            application/x-executable\;*) # Binaries
+                strip -v $STRIP_BINARIES "$file" ;;
+            application/x-pie-executable\;*) # Relocatable binaries
+                strip -v $STRIP_SHARED "$file" ;;
         esac
     done < <(find "$builddir" -type f -perm -u+x ! -name vmlinux -print0)
 
