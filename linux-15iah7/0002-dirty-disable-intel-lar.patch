@@ -1,34 +1,40 @@
-From ed82cb980c885294cef8439a2c7850276a2f43dc Mon Sep 17 00:00:00 2001
-From: aeghn <aeghn@outlook.com>
-Date: Wed, 31 Jan 2024 11:53:21 +0800
-Subject: [PATCH] dirty: disable intel lar
-
----
- drivers/net/wireless/intel/iwlwifi/iwl-nvm-parse.c | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/drivers/net/wireless/intel/iwlwifi/iwl-nvm-parse.c b/drivers/net/wireless/intel/iwlwifi/iwl-nvm-parse.c
-index 480f8edbfd..109d64b539 100644
---- a/drivers/net/wireless/intel/iwlwifi/iwl-nvm-parse.c
-+++ b/drivers/net/wireless/intel/iwlwifi/iwl-nvm-parse.c
-@@ -1557,7 +1557,7 @@ iwl_parse_nvm_data(struct iwl_trans *trans, const struct iwl_cfg *cfg,
- 		return NULL;
+diff --git i/drivers/net/wireless/intel/iwlwifi/iwl-nvm-parse.c w/drivers/net/wireless/intel/iwlwifi/iwl-nvm-parse.c
+index 5525ede07..7c0b67be4 100644
+--- i/drivers/net/wireless/intel/iwlwifi/iwl-nvm-parse.c
++++ w/drivers/net/wireless/intel/iwlwifi/iwl-nvm-parse.c
+@@ -1482,7 +1482,7 @@ iwl_parse_mei_nvm_data(struct iwl_trans *trans, const struct iwl_rf_cfg *cfg,
+ 	data->sku_cap_11ax_enable =
+ 		mei_nvm->caps & MEI_NVM_CAPS_11AX_SUPPORT;
+ 
+-	data->lar_enabled = mei_nvm->caps & MEI_NVM_CAPS_LARI_SUPPORT;
++	data->lar_enabled = false;
+ 
+ 	data->n_hw_addrs = mei_nvm->n_hw_addrs;
+ 	/* If no valid mac address was found - bail out */
+@@ -1566,15 +1566,14 @@ iwl_parse_nvm_data(struct iwl_trans *trans, const struct iwl_rf_cfg *cfg,
+ 			     &regulatory[NVM_CHANNELS_SDP] :
+ 			     &nvm_sw[NVM_CHANNELS];
+ 
+-		lar_enabled = true;
++		lar_enabled = false;
+ 	} else {
+ 		u16 lar_offset = data->nvm_version < 0xE39 ?
+ 				 NVM_LAR_OFFSET_OLD :
+ 				 NVM_LAR_OFFSET;
+ 
+ 		lar_config = le16_to_cpup(regulatory + lar_offset);
+-		data->lar_enabled = !!(lar_config &
+-				       NVM_LAR_ENABLED);
++		data->lar_enabled = false;
+ 		lar_enabled = data->lar_enabled;
+ 		ch_section = &regulatory[NVM_CHANNELS_EXTENDED];
  	}
- 
--	if (lar_enabled &&
-+	if (0 && lar_enabled &&
- 	    fw_has_capa(&fw->ucode_capa, IWL_UCODE_TLV_CAPA_LAR_SUPPORT))
- 		sbands_flags |= IWL_NVM_SBANDS_FLAGS_LAR;
- 
-@@ -2100,7 +2100,7 @@ struct iwl_nvm_data *iwl_get_nvm(struct iwl_trans *trans,
- 	nvm->valid_tx_ant = (u8)le32_to_cpu(rsp->phy_sku.tx_chains);
- 	nvm->valid_rx_ant = (u8)le32_to_cpu(rsp->phy_sku.rx_chains);
- 
--	if (le32_to_cpu(rsp->regulatory.lar_enabled) &&
-+	if (0 && le32_to_cpu(rsp->regulatory.lar_enabled) &&
+@@ -2160,7 +2159,7 @@ struct iwl_nvm_data *iwl_get_nvm(struct iwl_trans *trans,
+ 	if (0 && le32_to_cpu(rsp->regulatory.lar_enabled) &&
  	    fw_has_capa(&fw->ucode_capa,
  			IWL_UCODE_TLV_CAPA_LAR_SUPPORT)) {
- 		nvm->lar_enabled = true;
--- 
-2.43.0
-
+-		nvm->lar_enabled = true;
++		nvm->lar_enabled = false;
+ 		sbands_flags |= IWL_NVM_SBANDS_FLAGS_LAR;
+ 	}
+ 
