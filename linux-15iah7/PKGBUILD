@@ -99,12 +99,13 @@ prepare() {
     msg2 "Applying configuration"
     cp -vf ../config .config
 
+    modprobed-db store
+
     make olddefconfig
     diff -u ../config .config || :
 
     msg2 "Apply Modprobed-db config"
-    modprobed-db store
-    make LSMOD=$HOME/.config/modprobed.db localmodconfig
+    yes "" | make LSMOD=$HOME/.config/modprobed.db localmodconfig
 
     msg2 "Apply manual Modules"
     sh ../manual-modules 
