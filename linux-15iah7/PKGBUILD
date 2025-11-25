@@ -1,7 +1,7 @@
 # Maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
 
 pkgbase=linux-15iah7
-kernelver=6.17.8
+kernelver=6.17.9
 pkgversuf=arch1
 pkgver=${kernelver}.${pkgversuf}
 pkgrel=1
@@ -53,11 +53,11 @@ validpgpkeys=(
     83BC8889351B5DEBBB68416EB8AC08600F108CDF # Jan Alexander Steffens (heftig)
 )
 # https://www.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc
-sha256sums=('5a8de64a75fca706c01c6c0a77cf75a74618439db195e25f1f0268af6b2fb1da'
+sha256sums=('SKIP'
             'SKIP'
-            '9d04f6d76161ab5f9aa7c4be26c11e14da46c9f8b179ac7038b969872a4565b1'
+            'SKIP' 
             'SKIP'
-            '4bf24013d1a837bf6b51dbbfd1a162c59769f8371f2cf919e34b21271697f9c5'
+            'SKIP'
             'SKIP'
             'SKIP'
            )
@@ -109,6 +109,9 @@ prepare() {
 
     msg2 "Apply manual Modules"
     sh ../manual-modules 
+
+    cp .config $SRCDEST/config
+    echo "$SRCDEST"
 
     make -s kernelrelease >version
     msg2 "Prepared %s version %s" "$pkgbase" "$(<version)"
