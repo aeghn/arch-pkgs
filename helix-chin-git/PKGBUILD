@@ -43,7 +43,7 @@ b2sums=()
 options=('!lto')
 
 _HELIX_NAME=helix
-_SRC_DIR="/home/chin/Projects/helix"
+_SRC_DIR="/home/chin/repos/helix"
 
 prepare() {
   cd "$_SRC_DIR"

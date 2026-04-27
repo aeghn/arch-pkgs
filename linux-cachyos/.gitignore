@@ -1,0 +1,4 @@
+.SRCINFO
+cachyos-*.tar.gz
+config-*-cachyos
+dkms-clang.patch

@@ -1,5 +1,7 @@
 *.zst
 *.tar.xz
 *.zst.sig
+*.tar.sign
 */pkg
 */src
+

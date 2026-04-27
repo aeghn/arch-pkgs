@@ -123,7 +123,7 @@ if [[ $CLI == "YES" ]]; then
 else
   pkgname="emacs-chin-git"
 fi
-pkgver=31.0.50.188422
+pkgver=31.0.50.1
 pkgrel=1
 pkgdesc="GNU Emacs. Development branch, with PGTK and IGC enabled."
 arch=('x86_64')
@@ -135,10 +135,10 @@ makedepends=('git' 'mold')
 provides=('emacs')
 conflicts=('emacs')
 replaces=('emacs')
-#source=("emacs-git::git+file:///home/chin/Projects/emacs")
+#source=("emacs-git::git+file:///home/chin/repos/emacs")
 options=(!strip)
 install=emacs-git.install
-# b2sums=("SKIP")
+#b2sums=("SKIP")
 ################################################################################
 
 ################################################################################
@@ -290,7 +290,7 @@ pkgver() {
 # Doing so, breaks incremental compilation.
 prepare() {
     rm -rf "$srcdir/emacs-git"
-    cp -r "$HOME/Projects/emacs" "$srcdir/emacs-git"
+    cp -r "$HOME/repos/emacs" "$srcdir/emacs-git"
     cd "$srcdir/emacs-git"
     [[ -x configure ]] || (./autogen.sh git && ./autogen.sh autoconf)
 }
