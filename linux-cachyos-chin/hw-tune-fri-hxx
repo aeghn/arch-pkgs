@@ -5,32 +5,6 @@
 # dp <KEYWORD> [EXLUDE_MODULE...] -- Disable Pattern
 # d <FULLNAME> -- Disable Fixed
 
-_disable() {
-  echo "-- > disable $@"
-  scripts/config --disable "$1" 
-}
-
-e() { scripts/config --enable "$1" || exit 1; }
-
-d() { _disable "$1" || exit 1; }
-
-dp() {
-    local pattern="$1"
-    shift
-
-    local tmpfile=/tmp/.kernel.config
-    cp .config "${tmpfile}"
-
-    local ex=()
-    for i in "$@"; do
-        ex=(${ex[@]} -e "/$i/d")
-    done
-
-    cat "${tmpfile}" | grep -v "^#" | grep "$pattern" | sed -e "s/1/1/g" ${ex[@]} | awk -F'=' '{print $1}' | grep -v 'is not set' | while read line; do
-        _disable "$line" || exit 1
-    done
-}
-
 # CONFIG_STACK_VALIDATION gives better stack traces. Also is enabled in all official kernel packages by Archlinux team
 e CONFIG_STACK_VALIDATION
 

@@ -218,7 +218,7 @@ _nv_pkg="NVIDIA-Linux-x86_64-${_nv_ver}"
 _nv_open_pkg="NVIDIA-kernel-module-source-${_nv_ver}"
 source=(
     "http://localhost:5000/${_srcname}.tar.gz"
-    "manual-modules"
+    "hw-tune"
     "config")
 
 # LLVM makedepends
@@ -503,7 +503,7 @@ prepare() {
         fi
     fi
 
-    bash ../manual-modules
+    bash ../hw-tune
 
     ### Rewrite configuration
     echo "Rewrite configuration..."
